@@ -1,72 +1,83 @@
 import "reflect-metadata";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { CloudWebhookController } from "./cloud-webhook.controller.js";
+import { createHash, createHmac } from "node:crypto";
+import { CloudWebhookController, publishToken } from "./cloud-webhook.controller.js";
 import { BusinessController } from "./business.controller.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
 
-test("COS 回调无需 VOD file_id，重复通知只保留一个回放且不延长有效期", async (t) => {
+function mockStorage(rawDir: string): StorageService {
+  return {
+    localRecordingSize: async () => 1024,
+    uploadRecordingFile: async (key: string, path: string) => { void key; void path; },
+    deleteRecording: async () => undefined
+  } as unknown as StorageService;
+}
+
+test("SRS 推流回调校验 token：合法放行、无效拒绝、过期拒绝", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
-  process.env = { ...previous, TENCENT_CALLBACK_KEY: "test-callback", COS_BUCKET: "school-123", COS_REGION: "ap-guangzhou", RECORDING_RETENTION_DAYS: "7" };
-  const rows = new Map<string, { providerId: string; objectKey: string; expiresAt: Date; createdAt: Date }>();
+  process.env = { ...previous, SRS_SECRET: "unit-test-secret-16chars" };
+  let status = "ENDED";
+  const prisma = {
+    room: {
+      findUnique: async () => ({ id: "room1" }),
+      updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; }
+    }
+  } as unknown as PrismaService;
+  const callback = new CloudWebhookController(prisma, mockStorage(""));
+  const expire = Math.floor(Date.now() / 1000) + 3600;
+  const token = publishToken("stream1", expire);
+  await callback.srs({ action: "on_publish", stream: "stream1", param: `?token=${token}&expire=${expire}` });
+  assert.equal(status, "LIVE");
+  await assert.rejects(callback.srs({ action: "on_publish", stream: "stream1", param: `?token=${"0".repeat(32)}&expire=${expire}` }), /推流鉴权失败/);
+  const past = Math.floor(Date.now() / 1000) - 10;
+  await assert.rejects(callback.srs({ action: "on_publish", stream: "stream1", param: `?token=${publishToken("stream1", past)}&expire=${past}` }), /推流鉴权失败/);
+  await callback.srs({ action: "on_unpublish", stream: "stream1", param: "" });
+  assert.equal(status, "ENDED");
+});
+
+test("SRS 录制回调：入库幂等，非法路径拒绝，SRS 容器路径映射正确", async (t) => {
+  const previous = process.env;
+  t.after(() => { process.env = previous; });
+  process.env = { ...previous, SRS_SECRET: "unit-test-secret-16chars", RECORDING_RETENTION_DAYS: "7" };
+  const rows = new Map<string, { objectKey: string; expiresAt: Date; roomId: string }>();
   const prisma = {
     room: { findUnique: async () => ({ id: "room1" }) },
-    recording: { upsert: async ({ where, create }: { where: { providerId: string }; create: { providerId: string; objectKey: string; expiresAt: Date; createdAt: Date } }) => { if (!rows.has(where.providerId)) rows.set(where.providerId, create); } }
+    recording: {
+      findUnique: async ({ where }: { where: { providerId: string } }) => rows.get(where.providerId) ?? null,
+      create: async ({ data }: { data: { providerId: string; objectKey: string; expiresAt: Date; roomId: string } }) => { rows.set(data.providerId, data); return data; }
+    }
   } as unknown as PrismaService;
-  const callback = new CloudWebhookController(prisma);
-  const timestamp = Math.floor(Date.now() / 1000) + 600;
-  const end = Math.floor(Date.now() / 1000) - 300;
-  const event = { stream_id: "stream1", event_type: 100, t: timestamp, sign: createHash("md5").update(`test-callback${timestamp}`).digest("hex"), video_url: "https://school-123.cos.ap-guangzhou.myqcloud.com/recordings/stream1/lesson%20one.mp4", file_format: "mp4", duration: 60, end_time: end };
-  await callback.css(event);
-  await callback.css(event);
+  const storage = {
+    localRecordingSize: async () => 16,
+    uploadRecordingFile: async () => undefined,
+    deleteRecording: async () => undefined
+  } as unknown as StorageService;
+  const controller = new CloudWebhookController(prisma, storage);
+  const fileName = "stream1-1698400000.mp4";
+  await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
+  await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
   assert.equal(rows.size, 1);
   const row = [...rows.values()][0]!;
-  assert.equal(row.objectKey, "recordings/stream1/lesson one.mp4");
-  assert.equal(row.expiresAt.getTime(), (end + 7 * 86400) * 1000);
-  await assert.rejects(callback.css({ ...event, sign: "0".repeat(32) }), /鉴权失败/);
-  await assert.rejects(callback.css({ ...event, video_url: "https://school-123.cos.ap-guangzhou.myqcloud.com.evil.test/x.mp4" }), /COS/);
+  assert.equal(row.objectKey, `recordings/room1/${fileName}`);
+  assert.equal(row.roomId, "room1");
+  const retentionMs = row.expiresAt.getTime() - Date.now();
+  assert.ok(retentionMs > 6 * 86400_000 && retentionMs <= 8 * 86400_000);
+  await assert.rejects(controller.srs({ action: "on_dvr", stream: "stream1", file: "/etc/passwd" }), /路径不合法/);
+  await assert.rejects(controller.srs({ action: "on_dvr", stream: "stream1", file: "/data/recordings/evil.txt" }), /路径不合法/);
+  await assert.rejects(controller.srs({ action: "unknown", stream: "stream1" }), /未知/);
 });
 
 test("配置检查不返回密钥值，学生不能读取", (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
-  process.env = { ...previous, COS_SECRET_KEY: "should-never-be-returned", TENCENT_PUSH_DOMAIN: "push.example.com" };
-  const business = new BusinessController({} as PrismaService, new CosService());
+  process.env = { ...previous, MINIO_ROOT_PASSWORD: "should-never-be-returned", SRS_SECRET: "replace-with-your-secret" };
+  const business = new BusinessController({} as PrismaService, {} as StorageService);
   const result = business.cloudStatus({ currentUser: { role: "ADMIN" } } as UserRequest);
-  assert.equal(result.settings.find((f) => f.name === "TENCENT_PUSH_DOMAIN")?.configured, false);
+  assert.equal(result.settings.find((f) => f.name === "SRS_SECRET")?.configured, false);
   assert.ok(!JSON.stringify(result).includes("should-never-be-returned"));
   assert.throws(() => business.cloudStatus({ currentUser: { role: "STUDENT" } } as UserRequest), /仅管理员/);
-});
-
-test("迟到或重放的断流回调不能覆盖较新的开播状态", async (t) => {
-  const previous = process.env;
-  t.after(() => { process.env = previous; });
-  process.env = { ...previous, TENCENT_CALLBACK_KEY: "test-callback" };
-  let status = "ENDED";
-  let lastEventAt: Date | null = null;
-  const prisma = {
-    room: {
-      findUnique: async () => ({ id: "room1" }),
-      updateMany: async ({ where, data }: { where: { OR: [{ lastEventAt: null }, { lastEventAt: { lt: Date } }] }; data: { status: string; lastEventAt: Date } }) => {
-        if (!lastEventAt || lastEventAt < where.OR[1].lastEventAt.lt) {
-          status = data.status;
-          lastEventAt = data.lastEventAt;
-          return { count: 1 };
-        }
-        return { count: 0 };
-      }
-    }
-  } as unknown as PrismaService;
-  const now = Math.floor(Date.now() / 1000);
-  const tValue = now + 600;
-  const sign = createHash("md5").update(`test-callback${tValue}`).digest("hex");
-  const callback = new CloudWebhookController(prisma);
-  await callback.css({ stream_id: "stream1", event_type: 1, event_time: now - 10, t: tValue, sign });
-  await callback.css({ stream_id: "stream1", event_type: 0, event_time: now - 20, t: tValue, sign });
-  assert.equal(status, "LIVE");
-  await assert.rejects(callback.css({ stream_id: "stream1", event_type: 0, event_time: now - 7200, t: tValue, sign }), /事件时间无效/);
 });

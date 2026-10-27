@@ -7,7 +7,7 @@ import { BusinessController } from "./business.controller.js";
 import { CommerceController } from "./commerce.controller.js";
 import { AccountController } from "./account.controller.js";
 import { AuthService, hashPassword } from "./auth.service.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 import type { UserRequest } from "./auth.guard.js";
 import { ChatGateway } from "./chat.gateway.js";
 
@@ -33,7 +33,7 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
   const request = { currentUser: student } as unknown as UserRequest;
   const admin = { currentUser: adminUser } as unknown as UserRequest;
   const teacher = { currentUser: { id: "test-teacher", role: "TEACHER" } } as UserRequest;
-  const business = new BusinessController(db, new CosService());
+  const business = new BusinessController(db, new StorageService({} as never));
   const commerce = new CommerceController(db);
   const auth = new AuthService(db);
   const accounts = new AccountController(db, new ChatGateway(auth, db));

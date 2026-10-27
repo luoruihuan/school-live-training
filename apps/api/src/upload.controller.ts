@@ -1,7 +1,7 @@
 import { BadRequestException, Controller, Post, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { AuthGuard, requireStaff, type UserRequest } from "./auth.guard.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 
 function detectedMime(buffer: Buffer): "image/jpeg" | "image/png" | "image/webp" | null {
   if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return "image/jpeg";
@@ -13,7 +13,7 @@ function detectedMime(buffer: Buffer): "image/jpeg" | "image/png" | "image/webp"
 @Controller("uploads")
 @UseGuards(AuthGuard)
 export class UploadController {
-  constructor(private readonly cos: CosService) {}
+  constructor(private readonly storage: StorageService) {}
 
   @Post("image")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 3_000_000 } }))
@@ -22,6 +22,6 @@ export class UploadController {
     if (!file?.buffer) throw new BadRequestException("请选择图片文件");
     const mimeType = detectedMime(file.buffer);
     if (!mimeType) throw new BadRequestException("仅支持 JPEG、PNG、WebP 图片");
-    return { imageKey: await this.cos.uploadImage(file.buffer, mimeType) };
+    return { imageKey: await this.storage.uploadImage(file.buffer, mimeType) };
   }
 }
