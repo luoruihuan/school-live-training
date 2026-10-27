@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, ServiceUnavailableException, UseGuards } from "@nestjs/common";
 import type { Request, Response } from "express";
 import type { UserRequest } from "./auth.guard.js";
-import { AuthGuard, requireStaff } from "./auth.guard.js";
+import { AuthGuard, isAdminRole, requireStaff } from "./auth.guard.js";
+import { AuditService } from "./audit.service.js";
 import { hashPassword } from "./auth.service.js";
 import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
@@ -21,7 +22,7 @@ function liveDomain(): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class BusinessController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
 
   private async withImage(product: Product): Promise<Product> {
     if (!product.imageKey) return product;
@@ -30,7 +31,7 @@ export class BusinessController {
 
   @Post("users")
   async createUser(@Req() request: UserRequest, @Body() body: unknown) {
-    if (request.currentUser.role !== "ADMIN") throw new ForbiddenException("仅管理员可创建账号");
+    if (!isAdminRole(request.currentUser.role)) throw new ForbiddenException("仅管理员可创建账号");
     const input = object(body);
     const email = stringField(input, "email", 100).toLowerCase();
     const password = stringField(input, "password", 200);
@@ -39,10 +40,12 @@ export class BusinessController {
     const role = input.role;
     if (role !== "TEACHER" && role !== "STUDENT") throw new BadRequestException("角色不正确");
     if (await this.prisma.user.findUnique({ where: { email } })) throw new BadRequestException("该账号已存在");
-    return this.prisma.user.create({
+    const created = await this.prisma.user.create({
       data: { email, displayName: optionalString(input, "displayName", 80) || email, passwordHash: await hashPassword(password), role, mustChangePassword: true },
       select: { id: true, email: true, displayName: true, role: true, createdAt: true }
     });
+    await this.audit.log({ action: "USER_CREATED", userId: created.id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 创建了${role === "TEACHER" ? "教师" : "学生"}账号 ${email}` });
+    return created;
   }
 
   @Get("product-images/:id")
@@ -154,7 +157,7 @@ export class BusinessController {
 
   @Get("products")
   async products(@Req() request: UserRequest) {
-    const staff = request.currentUser.role === "ADMIN" || request.currentUser.role === "TEACHER";
+    const staff = isAdminRole(request.currentUser.role) || request.currentUser.role === "TEACHER";
     const products = await this.prisma.product.findMany({
       where: staff ? {} : { isActive: true, rooms: { some: { room: { status: { not: "DRAFT" } } } } }, orderBy: { createdAt: "desc" }
     });

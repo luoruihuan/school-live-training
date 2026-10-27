@@ -6,11 +6,12 @@ import { integerField, object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
+import { AuditService } from "./audit.service.js";
 
 @Controller()
 @UseGuards(AuthGuard)
 export class CommerceController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
   @Get("points/me")
   async myPoints(@Req() request: UserRequest) {
@@ -190,6 +191,7 @@ export class CommerceController {
     requireStaff(request.currentUser);
     const result = await this.prisma.order.updateMany({ where: { id, status: { in: ["PENDING_PICKUP", "PENDING_DELIVERY"] } }, data: { status: "COMPLETED" } });
     if (!result.count) throw new BadRequestException("订单不存在或已完成");
+    await this.audit.log({ action: "ORDER_COMPLETED", actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 标记订单 ${id.slice(-8).toUpperCase()} 已交付` });
     return { ok: true };
   }
 

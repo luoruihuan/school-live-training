@@ -11,10 +11,12 @@ import { RecordingController } from "./recording.controller.js";
 import { StorageService } from "./storage.service.js";
 import { UploadController } from "./upload.controller.js";
 import { PrismaService } from "./prisma.service.js";
+import { AuditService } from "./audit.service.js";
+import { OpsController } from "./ops.controller.js";
 import { AccountController } from "./account.controller.js";
 import { HealthController } from "./health.controller.js";
 @Module({
-  controllers: [AuthController, BusinessController, CommerceController, ChatController, CloudWebhookController, RecordingController, UploadController, AccountController, HealthController],
-  providers: [PrismaService, AuthService, AuthGuard, ChatGateway, StorageService]
+  controllers: [OpsController, AuthController, BusinessController, CommerceController, ChatController, CloudWebhookController, RecordingController, UploadController, AccountController, HealthController],
+  providers: [PrismaService, AuthService, AuthGuard, ChatGateway, StorageService, AuditService]
 })
 export class AppModule {}

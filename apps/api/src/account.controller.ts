@@ -5,20 +5,23 @@ import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { ChatGateway } from "./chat.gateway.js";
 import { withUserLock } from "./user-transaction.js";
+import { AuditService } from "./audit.service.js";
+import { isAdminRole } from "./auth.guard.js";
 
 @Controller("users")
 @UseGuards(AuthGuard)
 export class AccountController {
-  constructor(private readonly prisma: PrismaService, private readonly chat: ChatGateway) {}
+  constructor(private readonly prisma: PrismaService, private readonly chat: ChatGateway, private readonly audit: AuditService) {}
 
   private admin(request: UserRequest) {
-    if (request.currentUser.role !== "ADMIN") throw new ForbiddenException("仅管理员可管理账号");
+    if (!isAdminRole(request.currentUser.role)) throw new ForbiddenException("仅管理员可管理账号");
   }
 
   @Get()
   list(@Req() request: UserRequest) {
     this.admin(request);
     return this.prisma.user.findMany({
+      where: request.currentUser.role === "SUPER_ADMIN" ? {} : { role: { not: "SUPER_ADMIN" } },
       select: { id: true, email: true, displayName: true, role: true, isActive: true, mustChangePassword: true, pointsBalance: true, createdAt: true },
       orderBy: { createdAt: "desc" }
     });
@@ -34,12 +37,15 @@ export class AccountController {
     const result = await this.prisma.$transaction(async (tx) => {
       const users = await tx.$queryRaw<{ role: string }[]>`SELECT role FROM User WHERE id = ${id} FOR UPDATE`;
       if (!users[0]) throw new NotFoundException("账号不存在");
-      if (users[0].role === "ADMIN") throw new BadRequestException("此入口仅管理教师和学生账号");
+      if (users[0].role === "SUPER_ADMIN" || (users[0].role === "ADMIN" && request.currentUser.role !== "SUPER_ADMIN")) {
+        throw new BadRequestException("此入口仅管理教师和学生账号");
+      }
       await tx.user.update({ where: { id }, data: { isActive } });
       await tx.session.deleteMany({ where: { userId: id } });
       return { ok: true };
     });
     this.chat.disconnectUser(id);
+    await this.audit.log({ action: isActive ? "USER_ENABLED" : "USER_DISABLED", userId: id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} ${isActive ? "启用" : "停用"}了账号 ${id.slice(-8).toUpperCase()}` });
     return result;
   }
 
@@ -52,12 +58,15 @@ export class AccountController {
     const result = await this.prisma.$transaction(async (tx) => {
       const users = await tx.$queryRaw<{ role: string }[]>`SELECT role FROM User WHERE id = ${id} FOR UPDATE`;
       if (!users[0]) throw new NotFoundException("账号不存在");
-      if (users[0].role === "ADMIN") throw new BadRequestException("此入口仅管理教师和学生账号");
+      if (users[0].role === "SUPER_ADMIN" || (users[0].role === "ADMIN" && request.currentUser.role !== "SUPER_ADMIN")) {
+        throw new BadRequestException("此入口仅管理教师和学生账号");
+      }
       await tx.user.update({ where: { id }, data: { passwordHash, mustChangePassword: true } });
       await tx.session.deleteMany({ where: { userId: id } });
       return { ok: true };
     });
     this.chat.disconnectUser(id);
+    await this.audit.log({ action: "PASSWORD_RESET", userId: id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 重置了账号 ${id.slice(-8).toUpperCase()} 的密码` });
     return result;
   }
 
@@ -81,12 +90,13 @@ export class AccountController {
         return previous;
       }
       const user = await tx.user.findUniqueOrThrow({ where: { id } });
-      if (user.role === "ADMIN") throw new BadRequestException("不能调整管理员积分");
+      if (isAdminRole(user.role)) throw new BadRequestException("不能调整管理员积分");
       const delta = mode === "ADD" ? points : mode === "DEDUCT" ? -points : points - user.pointsBalance;
       const balanceAfter = user.pointsBalance + delta;
       if (balanceAfter < 0) throw new BadRequestException("积分不足，不能扣减");
       if (balanceAfter > 2_000_000_000) throw new BadRequestException("积分余额超限");
       await tx.user.update({ where: { id }, data: { pointsBalance: balanceAfter } });
+      await this.audit.log({ action: "POINTS_ADJUST", userId: id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} ${mode === "ADD" ? "增加" : mode === "DEDUCT" ? "扣减" : "设置"} ${points} 积分（${reason}），余额 ${balanceAfter}` });
       return tx.pointLedger.create({ data: { userId: id, actorId: request.currentUser.id, delta, balanceAfter, reason, requestKey } });
     });
   }

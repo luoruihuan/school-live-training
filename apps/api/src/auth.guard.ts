@@ -5,6 +5,10 @@ import { cookieToken } from "./auth.controller.js";
 
 export type UserRequest = Request & { currentUser: CurrentUser };
 
+export function isAdminRole(role: string): boolean {
+  return role === "ADMIN" || role === "SUPER_ADMIN";
+}
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(private readonly auth: AuthService) {}
@@ -18,7 +22,13 @@ export class AuthGuard implements CanActivate {
 }
 
 export function requireStaff(user: CurrentUser): void {
-  if (user.role !== "ADMIN" && user.role !== "TEACHER") {
+  if (user.role !== "ADMIN" && user.role !== "TEACHER" && user.role !== "SUPER_ADMIN") {
     throw new ForbiddenException("仅教师或管理员可操作");
+  }
+}
+
+export function requireSuperAdmin(user: CurrentUser): void {
+  if (user.role !== "SUPER_ADMIN") {
+    throw new ForbiddenException("仅超级管理员可访问运维面板");
   }
 }
