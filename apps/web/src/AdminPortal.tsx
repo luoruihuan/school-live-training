@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Alert, Avatar, Button, Drawer, Layout, Menu, Space, Spin, Tag } from "antd";
-import { DashboardOutlined, GiftOutlined, LogoutOutlined, MenuOutlined, PlaySquareFilled, ProfileOutlined, ReloadOutlined, ShopOutlined, ShoppingOutlined, TeamOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { DashboardOutlined, GiftOutlined, LogoutOutlined, MenuOutlined, PlaySquareFilled, ProfileOutlined, ShopOutlined, ShoppingOutlined, TeamOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { User } from "./api";
 import { usePlatform } from "./usePlatform";
 import { Management, type ManageTab } from "./Management";
