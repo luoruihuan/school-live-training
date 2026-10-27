@@ -29,7 +29,7 @@ export class RecordingController {
   }
 
   @Get("recordings/:id/file")
-  async file(@Param("id") id: string, @Req() request: UserRequest, @Query() query: Record<string, unknown>, @Res({ passthrough: true }) response: Response) {
+  async file(@Param("id") id: string, @Req() request: UserRequest, @Query() query: Record<string, unknown>, @Res() response: Response) {
     void query;
     const recording = await this.visible(id, request);
     if (!recording.objectKey || !recording.objectKey.endsWith(".mp4")) throw new ServiceUnavailableException("回放文件不可用");
@@ -49,7 +49,6 @@ export class RecordingController {
         }
         if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= total) {
           response.status(416).setHeader("Content-Range", `bytes */${total}`);
-          return;
         }
         end = Math.min(end, start + MAX_CHUNK - 1);
         const { stream, contentLength } = await this.storage.getRecordingStream(recording.objectKey, { start, end });

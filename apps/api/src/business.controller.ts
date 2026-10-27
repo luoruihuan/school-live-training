@@ -46,15 +46,15 @@ export class BusinessController {
   }
 
   @Get("product-images/:id")
-  async productImage(@Req() request: UserRequest, @Param("id") id: string, @Res({ passthrough: true }) response: Response) {
+  async productImage(@Req() request: UserRequest, @Param("id") id: string, @Res() response: Response) {
     void request;
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product?.imageKey) throw new NotFoundException("商品图片不存在");
     const { stream, contentType } = await this.storage.getImageStream(product.imageKey);
+    response.status(200);
     response.setHeader("Content-Type", contentType);
     response.setHeader("Cache-Control", "private, max-age=86400");
     stream.pipe(response);
-    return;
   }
 
   @Get("stores")
