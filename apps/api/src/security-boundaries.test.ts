@@ -67,7 +67,8 @@ test("跨站写请求无法用表单或伪造来源触发，云回调保留独�
     assert.deepEqual(call("POST", "/api/users/student-1/points", "https://evil.example.com", "1"), { nextCalled: false, status: 403 });
     assert.deepEqual(call("POST", "/api/users/student-1/points", "https://classroom.example.com"), { nextCalled: false, status: 403 });
     assert.deepEqual(call("POST", "/api/users/student-1/points", "https://classroom.example.com", "1"), { nextCalled: true, status: 0 });
-    assert.deepEqual(call("POST", "/api/webhooks/css"), { nextCalled: true, status: 0 });
+    assert.deepEqual(call("POST", "/api/webhooks/srs"), { nextCalled: true, status: 0 });
+    assert.deepEqual(call("POST", "/api/webhooks/css").status, 403);
   } finally { if (previous === undefined) delete process.env.APP_ORIGIN; else process.env.APP_ORIGIN = previous; }
 });
 
