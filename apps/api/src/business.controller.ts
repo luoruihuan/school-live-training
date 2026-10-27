@@ -133,7 +133,7 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const room = await this.room(id, request);
     const domain = liveDomain();
-    const expire = Math.floor(Date.now() / 1000) + 60 * 60;
+    const expire = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
     const token = publishToken(room.streamName, expire);
     return {
       url: `rtmp://${domain}:1935/live/${room.streamName}?token=${token}&expire=${expire}`,
