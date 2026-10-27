@@ -6,7 +6,7 @@ import { csrfProtection } from "./request-security.js";
 import { BusinessController } from "./business.controller.js";
 import { RecordingController } from "./recording.controller.js";
 import { CommerceController } from "./commerce.controller.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 import { HealthController } from "./health.controller.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
@@ -25,29 +25,29 @@ test("草稿课堂在服务端不能被学生列表、观看、回放和领券�
     coupon: { findUnique: async () => ({ id: "coupon-1", room, expiresAt: new Date(Date.now() + 60_000) }) },
     userCoupon: { upsert: async () => { throw new Error("不应领券"); } }
   } as unknown as PrismaService;
-  const business = new BusinessController(prisma, new CosService());
+  const business = new BusinessController(prisma, new StorageService({} as never));
   assert.deepEqual(await business.rooms(student), []);
   assert.equal((await business.rooms(teacher)).length, 1);
   await assert.rejects(business.room(room.id, student), /直播间不存在/);
   await assert.rejects(business.playbackAddress(room.id, student), /直播间不存在/);
-  await assert.rejects(new RecordingController(prisma, new CosService()).playback("recording-1", student), /直播间不存在/);
+  await assert.rejects(new RecordingController(prisma, new StorageService({} as never)).playback("recording-1", student), /直播间不存在/);
   await assert.rejects(new CommerceController(prisma).claimCoupon(student, "coupon-1"), /直播间不存在/);
 });
 
 test("播放签名与腾讯云 1 秒 Key 有效时间合计为四小时", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
-  process.env = { ...previous, TENCENT_PLAY_DOMAIN: "play.school.test", TENCENT_PLAY_KEY: "test-key" };
+  process.env = { ...previous, APP_DOMAIN: "live.school.test" };
   const prisma = {
     room: { findUnique: async () => ({ id: "room-1", status: "READY", streamName: "stream-1" }) },
     serviceQuota: { findUnique: async () => ({ id: 1, startDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10), annualGb: 10000 }) },
     usageDaily: { findMany: async () => [] }
   } as unknown as PrismaService;
   const before = Date.now();
-  const result = await new BusinessController(prisma, new CosService()).playbackAddress("room-1", student);
+  const result = await new BusinessController(prisma, new StorageService({} as never)).playbackAddress("room-1", student);
   const after = Date.now();
-  const txTime = parseInt(new URL(result.flv).searchParams.get("txTime")!, 16);
-  assert.equal(new Date((txTime + 1) * 1000).toISOString(), result.expiresAt);
+  assert.equal(result.flv, "https://live.school.test/live/stream-1.flv");
+  assert.equal(result.hls, "https://live.school.test/live/stream-1.m3u8");
   assert.ok(new Date(result.expiresAt).getTime() >= before + 240 * 60_000 - 1000);
   assert.ok(new Date(result.expiresAt).getTime() <= after + 240 * 60_000);
 });

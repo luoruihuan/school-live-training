@@ -1,48 +1,33 @@
-import { createHash, randomBytes } from "node:crypto";
-import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
-  Param, Patch, Post, Req, ServiceUnavailableException, UseGuards
-} from "@nestjs/common";
+import { randomBytes } from "node:crypto";
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, ServiceUnavailableException, UseGuards } from "@nestjs/common";
+import type { Request, Response } from "express";
 import type { UserRequest } from "./auth.guard.js";
 import { AuthGuard, requireStaff } from "./auth.guard.js";
 import { hashPassword } from "./auth.service.js";
 import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 import type { Product } from "./generated/prisma/client.js";
 import { quotaState } from "./usage-quota.js";
 import { withUserLock } from "./user-transaction.js";
 import { cloudConfiguration, recordingRetentionDays } from "./cloud-config.js";
 import { visibleRoom } from "./room-access.js";
+import { publishToken } from "./cloud-webhook.controller.js";
 
-function cloudSetting(name: string): string {
-  const value = process.env[name];
-  if (!value || value.includes("example.com")) {
-    throw new ServiceUnavailableException(`请先配置 ${name}`);
-  }
+function liveDomain(): string {
+  const value = process.env.APP_DOMAIN;
+  if (!value || value.includes("example.com")) throw new ServiceUnavailableException("请先配置 APP_DOMAIN");
   return value;
-}
-
-function signedUrl(domain: string, app: string, streamName: string, key: string, minutes: number, keyValiditySeconds = 0) {
-  const txTime = Math.floor(Date.now() / 1000 + minutes * 60 - keyValiditySeconds).toString(16);
-  const txSecret = createHash("md5").update(`${key}${streamName}${txTime}`).digest("hex");
-  const query = `txSecret=${txSecret}&txTime=${txTime}`;
-  return {
-    rtmp: `rtmp://${domain}/${app}/${streamName}?${query}`,
-    flv: `https://${domain}/${app}/${streamName}.flv?${query}`,
-    hls: `https://${domain}/${app}/${streamName}.m3u8?${query}`,
-    expiresAt: new Date((parseInt(txTime, 16) + keyValiditySeconds) * 1000).toISOString()
-  };
 }
 
 @Controller()
 @UseGuards(AuthGuard)
 export class BusinessController {
-  constructor(private readonly prisma: PrismaService, private readonly cos: CosService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
 
   private async withImage(product: Product): Promise<Product> {
     if (!product.imageKey) return product;
-    return { ...product, imageUrl: await this.cos.signedReadUrl(product.imageKey) };
+    return { ...product, imageUrl: `/api/product-images/${product.id}` };
   }
 
   private async assertUsageAvailable(): Promise<void> {
@@ -73,6 +58,18 @@ export class BusinessController {
       data: { email, displayName: stringField(input, "displayName", 80), passwordHash: await hashPassword(password), role, mustChangePassword: true },
       select: { id: true, email: true, displayName: true, role: true, createdAt: true }
     });
+  }
+
+  @Get("product-images/:id")
+  async productImage(@Req() request: UserRequest, @Param("id") id: string, @Res({ passthrough: true }) response: Response) {
+    void request;
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product?.imageKey) throw new NotFoundException("商品图片不存在");
+    const { stream, contentType } = await this.storage.getImageStream(product.imageKey);
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Cache-Control", "private, max-age=86400");
+    stream.pipe(response);
+    return;
   }
 
   @Get("stores")
@@ -151,23 +148,25 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const room = await this.room(id, request);
     await this.assertUsageAvailable();
-    const domain = cloudSetting("TENCENT_PUSH_DOMAIN");
-    const app = process.env.TENCENT_STREAM_APP || "live";
-    const key = cloudSetting("TENCENT_PUSH_KEY");
-    const address = signedUrl(domain, app, room.streamName, key, 60);
-    return { url: address.rtmp, expiresAt: address.expiresAt };
+    const domain = liveDomain();
+    const expire = Math.floor(Date.now() / 1000) + 60 * 60;
+    const token = publishToken(room.streamName, expire);
+    return {
+      url: `rtmp://${domain}:1935/live/${room.streamName}?token=${token}&expire=${expire}`,
+      expiresAt: new Date(expire * 1000).toISOString()
+    };
   }
 
   @Get("rooms/:id/playback")
   async playbackAddress(@Param("id") id: string, @Req() request: UserRequest) {
     const room = await this.room(id, request);
     await this.assertUsageAvailable();
-    const domain = cloudSetting("TENCENT_PLAY_DOMAIN");
-    const app = process.env.TENCENT_STREAM_APP || "live";
-    const key = cloudSetting("TENCENT_PLAY_KEY");
-    // 播放域名的 Key 有效时间须在腾讯云控制台设为 1 秒；实际过期时间为 txTime + 该值。
-    const address = signedUrl(domain, app, room.streamName, key, 240, 1);
-    return { flv: address.flv, hls: address.hls, expiresAt: address.expiresAt };
+    const domain = liveDomain();
+    return {
+      flv: `https://${domain}/live/${room.streamName}.flv`,
+      hls: `https://${domain}/live/${room.streamName}.m3u8`,
+      expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
+    };
   }
 
   @Get("products")

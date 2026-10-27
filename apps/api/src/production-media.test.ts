@@ -5,7 +5,7 @@ import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnav
 import { BusinessController } from "./business.controller.js";
 import { RecordingController } from "./recording.controller.js";
 import { UploadController } from "./upload.controller.js";
-import { CosService } from "./cos.service.js";
+import { StorageService } from "./storage.service.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
 
@@ -22,7 +22,7 @@ test("旧演示配置不能绕过云服务额度与访问权限", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new BusinessController(prisma, new CosService());
+  const controller = new BusinessController(prisma, new StorageService({} as never));
   await assert.rejects(controller.publishAddress(teacher, room.id), ServiceUnavailableException);
   await assert.rejects(controller.playbackAddress(room.id, teacher), ServiceUnavailableException);
   await assert.rejects(controller.publishAddress(student, room.id), ForbiddenException);
@@ -33,22 +33,22 @@ test("无录制记录时返回空列表，不生成示例回放", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new RecordingController(prisma, new CosService());
+  const controller = new RecordingController(prisma, new StorageService({} as never));
   assert.deepEqual(await controller.recordings(room.id, teacher), []);
   await assert.rejects(controller.playback(`mock-recording-${room.id}`, teacher), NotFoundException);
 });
 
-test("COS 未配置时明确失败，不返回本地演示图片", async (t) => {
+test("MinIO 未配置时明确失败，不返回本地演示图片", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
-  process.env = { ...previous, MOCK_LIVE: "true", COS_BUCKET: "", COS_REGION: "", COS_SECRET_ID: "", COS_SECRET_KEY: "" };
-  const cos = new CosService();
-  await assert.rejects(cos.signedReadUrl(`product-images/${"a".repeat(32)}.png`), ServiceUnavailableException);
+  process.env = { ...previous, MOCK_LIVE: "true", MINIO_ENDPOINT: "", MINIO_ROOT_USER: "", MINIO_ROOT_PASSWORD: "" };
+  const storage = new StorageService({} as never);
+  await assert.rejects(storage.getImageStream(`product-images/${"a".repeat(32)}.png`), ServiceUnavailableException);
 });
 
 test("真实图片上传保留角色与文件内容校验", async () => {
   let uploaded = false;
-  const cos = { uploadImage: async (buffer: Buffer, mime: string) => { assert.equal(mime, "image/png"); assert.equal(buffer.length, 8); uploaded = true; return "product-images/validated.png"; } } as unknown as CosService;
+  const cos = { uploadImage: async (buffer: Buffer, mime: string) => { assert.equal(mime, "image/png"); assert.equal(buffer.length, 8); uploaded = true; return "product-images/validated.png"; } } as unknown as StorageService;
   const controller = new UploadController(cos);
   const png = { buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) } as Express.Multer.File;
   await assert.rejects(controller.image(student, png), ForbiddenException);
