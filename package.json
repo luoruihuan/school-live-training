@@ -1,0 +1,25 @@
+{
+  "name": "school-live-training",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "check": "npm run check -w apps/api && npm run check -w apps/web",
+    "test": "npm run test -w apps/api",
+    "db:generate": "npm run db:generate -w apps/api",
+    "db:init": "npm run db:init -w apps/api"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "overrides": {
+    "mariadb": "3.5.4",
+    "mysql2": "3.24.5",
+    "multer": "2.5.0",
+    "body-parser": "2.4.0",
+    "fast-uri": "3.1.9",
+    "deepmerge-ts": "8.0.2"
+  }
+}

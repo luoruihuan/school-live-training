@@ -1,0 +1,60 @@
+map $http_upgrade $live_connection { default upgrade; '' close; }
+limit_req_zone $binary_remote_addr zone=live_login:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=live_points:10m rate=1r/s;
+
+server {
+    listen 80;
+    server_name ${APP_DOMAIN};
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        try_files $uri =404;
+    }
+    location / { return 301 https://${APP_DOMAIN}$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name ${APP_DOMAIN};
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 4m;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    location = /healthz { access_log off; return 200 'ok'; }
+    location = /api/auth/login {
+        limit_req zone=live_login burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://api:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        add_header Cache-Control "no-store" always;
+    }
+    location ~ ^/api/users/[^/]+/points$ {
+        limit_req zone=live_points burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://api:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        add_header Cache-Control "no-store" always;
+    }
+    location /api/ {
+        proxy_pass http://api:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        add_header Cache-Control "no-store" always;
+    }
+    location /socket.io/ {
+        proxy_pass http://api:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $live_connection;
+        proxy_set_header Host $host;
+        proxy_read_timeout 75s;
+    }
+    location /assets/ { try_files $uri =404; expires 7d; }
+    location / { try_files $uri $uri/ /index.html; }
+}
+
