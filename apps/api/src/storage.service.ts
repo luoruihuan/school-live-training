@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { stat, statfs } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaService } from "./prisma.service.js";
@@ -9,7 +9,13 @@ import { recordingRetentionDays } from "./cloud-config.js";
 
 export type ImageMime = "image/jpeg" | "image/png" | "image/webp";
 
+const SRS_RAW_DIR = "/var/srs-recordings";
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function envNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 @Injectable()
 export class StorageService implements OnModuleInit, OnModuleDestroy {
@@ -41,7 +47,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
         else this.logger.error(`存储桶 ${bucket} 初始化失败：${String(error)}`);
       }
     }
-    this.cleanupTimer = setInterval(() => { void this.cleanupExpired(); }, CLEANUP_INTERVAL_MS);
+    this.cleanupTimer = setInterval(() => { void this.cleanup(); }, CLEANUP_INTERVAL_MS);
     this.cleanupTimer.unref();
   }
 
@@ -100,6 +106,21 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     return (await stat(filePath)).size;
   }
 
+  async diskUsagePercent(): Promise<number | null> {
+    try {
+      const stats = await statfs(SRS_RAW_DIR);
+      if (!stats.blocks) return null;
+      return Math.round(((stats.blocks - stats.bavail) / stats.blocks) * 10000) / 100;
+    } catch {
+      return null;
+    }
+  }
+
+  private async cleanup(): Promise<void> {
+    await this.cleanupExpired();
+    await this.cleanupByDiskWatermark();
+  }
+
   private async cleanupExpired(): Promise<void> {
     const retentionNote = `保留期 ${recordingRetentionDays()} 天`;
     try {
@@ -114,6 +135,41 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       if (expired.length) this.logger.log(`已清理 ${expired.length} 条过期回放（${retentionNote}）`);
     } catch (error) {
       this.logger.error(`回放清理任务失败：${String(error)}`);
+    }
+  }
+
+  private async cleanupByDiskWatermark(): Promise<void> {
+    const high = envNumber("RECORDING_DISK_HIGH_WATERMARK", 85);
+    const low = Math.min(envNumber("RECORDING_DISK_LOW_WATERMARK", 75), high - 1);
+    const minKeepDays = envNumber("RECORDING_MIN_RETENTION_DAYS", 90);
+    try {
+      let usage = await this.diskUsagePercent();
+      if (usage === null || usage < high) return;
+      const oldestAllowed = new Date(Date.now() - minKeepDays * 24 * 60 * 60 * 1000);
+      this.logger.warn(`磁盘使用率 ${usage}% ≥ ${high}%，开始提前清理 ${minKeepDays} 天前的最旧回放`);
+      const skipped = new Set<string>();
+      let removed = 0;
+      while (usage !== null && usage >= low && removed < 200) {
+        const candidate = await this.prisma.recording.findFirst({
+          where: { createdAt: { lt: oldestAllowed }, id: { notIn: [...skipped] } },
+          orderBy: { createdAt: "asc" }
+        });
+        if (!candidate) break;
+        if (candidate.objectKey) {
+          try { await this.deleteRecording(candidate.objectKey); }
+          catch (error) {
+            this.logger.warn(`水位清理删除对象失败 ${candidate.objectKey}：${String(error)}`);
+            skipped.add(candidate.id);
+            continue;
+          }
+        }
+        await this.prisma.recording.delete({ where: { id: candidate.id } }).catch(() => undefined);
+        removed++;
+        usage = await this.diskUsagePercent();
+      }
+      this.logger.log(`水位清理完成：提前删除 ${removed} 条（最小保留 ${minKeepDays} 天，当前磁盘 ${usage ?? "未知"}%）`);
+    } catch (error) {
+      this.logger.error(`磁盘水位清理失败：${String(error)}`);
     }
   }
 }
