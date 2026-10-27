@@ -5,7 +5,7 @@ export function allowedOrigin(origin: unknown): boolean {
 }
 
 export function csrfProtection(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.path === "/api/webhooks/css") {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.path === "/api/webhooks/srs") {
     next();
     return;
   }
