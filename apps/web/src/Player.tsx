@@ -43,9 +43,10 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
           setError("当前浏览器不支持直播播放，请使用新版 Chrome 或 Safari。");
         }
       };
-      if (video.canPlayType("application/vnd.apple.mpegurl")) { await startHls(); return; }
       const { default: mpegts } = await import("mpegts.js");
       if (cancelled) return;
+      // Chrome/Edge 等现代浏览器一律优先 mpegts.js 播 FLV（低延迟）；
+      // 原生 HLS 仅作为不支持 mpegts.js 的浏览器（如部分 Safari）的兜底。
       if (mpegts.isSupported()) {
         flvPlayer = mpegts.createPlayer({ type: "flv", isLive: true, url: flv }, { enableStashBuffer: false });
         flvPlayer.attachMediaElement(video);
@@ -56,8 +57,10 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
         });
         flvPlayer.load();
         void flvPlayer.play()?.catch(() => { /* 浏览器可要求用户主动点击播放 */ });
-      } else {
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         await startHls();
+      } else {
+        setError("当前浏览器不支持直播播放，请使用新版 Chrome 或 Safari。");
       }
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : "获取播放地址失败");
