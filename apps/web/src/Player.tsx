@@ -75,7 +75,7 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
   }, [roomId, attempt, mock]);
 
   return <div className="player">
-    <video ref={videoRef} controls playsInline autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => setError("")} />
+    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => setError("")} />
     {mock && <Alert type="info" title="本地视频演示 · 不代表真实直播已接通" showIcon className="spaced-top" />}
     {error && <Alert type="warning" title={error} showIcon action={<Button size="small" onClick={() => setAttempt((value) => value + 1)}>重新连接</Button>} />}
     <span className="player__hint">{mock ? "演示视频会循环播放，点击播放器可取消静音。" : "点击播放器可取消静音。未开播时画面可能暂时为空。"}</span>
