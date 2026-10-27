@@ -236,17 +236,3 @@ model Recording {
   room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   @@index([roomId, createdAt])
 }
-
-model ServiceQuota {
-  id          Int      @id @default(1)
-  startDate   String   @db.VarChar(10)
-  annualGb    Int      @default(10000)
-  updatedAt   DateTime @updatedAt
-}
-
-model UsageDaily {
-  date       String   @id @db.VarChar(10)
-  billedMb   Float
-  source     String   @default("MANUAL") @db.VarChar(20)
-  updatedAt  DateTime @updatedAt
-}

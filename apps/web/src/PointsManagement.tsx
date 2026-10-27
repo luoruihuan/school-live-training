@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Form, Input, InputNumber, Modal, Radio, Space, Table, Tag } from "antd";
+import { Alert, App, Button, Card, Form, Input, InputNumber, Modal, Radio, Space, Table, Tag } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { api, pointText, post, type ManagedUser } from "./api";
 
@@ -8,6 +8,7 @@ type PointEntry = { id: string; delta: number; balanceAfter: number; reason: str
 type PointEntryPage = { items: PointEntry[]; total: number; page: number; pageSize: number };
 
 export function PointsManagement() {
+  const { modal } = App.useApp();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<ManagedUser>();
@@ -47,8 +48,15 @@ export function PointsManagement() {
     catch (reason) { setError(reason instanceof Error ? reason.message : "读取积分流水失败"); }
   }
 
-  async function save(values: { points: number; reason: string; adminPassword: string }) {
+  async function save(values: { points: number; reason: string }) {
     if (!selected || busy) return;
+    const actionText = mode === "ADD" ? "增加" : mode === "DEDUCT" ? "扣减" : "设置余额为";
+    const ok = await modal.confirm({
+      title: `确认调整积分 · ${selected.displayName}`,
+      content: `将${actionText} ${pointText(values.points)}（原因：${values.reason}），是否确认？`,
+      okText: "确认调整", cancelText: "取消", okButtonProps: { danger: mode !== "ADD" }
+    });
+    if (!ok) return;
     setBusy(true); setError("");
     try {
       await post(`/users/${selected.id}/points`, { ...values, mode, requestKey: requestKey.current });
@@ -71,11 +79,10 @@ export function PointsManagement() {
     <p className="muted small">增加、扣减和设置余额均记录操作人、原因及调整后余额；流水按 20 笔一页分页查看。</p>
     <Modal title={`调整积分 · ${selected?.displayName ?? ""}`} open={!!selected} onCancel={() => setSelected(undefined)} footer={null} destroyOnHidden>
       <p>当前余额：{pointText(users.find((user) => user.id === selected?.id)?.pointsBalance ?? selected?.pointsBalance ?? 0)}</p>
-      <Form layout="vertical" key={selected?.id} disabled={busy} onValuesChange={(changed) => { if (!("adminPassword" in changed)) requestKey.current = crypto.randomUUID(); }} onFinish={(values: { points: number; reason: string; adminPassword: string }) => void save(values)}>
+      <Form layout="vertical" key={selected?.id} disabled={busy} onValuesChange={() => { requestKey.current = crypto.randomUUID(); }} onFinish={(values: { points: number; reason: string }) => void save(values)}>
         <Form.Item label="操作方式"><Radio.Group value={mode} onChange={(event) => { setMode(event.target.value as PointMode); requestKey.current = crypto.randomUUID(); }} options={[{ label: "增加", value: "ADD" }, { label: "扣减", value: "DEDUCT" }, { label: "设置余额", value: "SET" }]} /></Form.Item>
         <Form.Item name="points" label={mode === "SET" ? "调整后的余额" : "积分数量"} rules={[{ required: true, message: "请输入积分" }]}><InputNumber min={mode === "SET" ? 0 : 1} max={mode === "SET" ? 2_000_000_000 : 1_000_000} precision={0} className="full-width" /></Form.Item>
         <Form.Item name="reason" label="调整原因" rules={[{ required: true, whitespace: true, message: "请填写调整原因" }]}><Input maxLength={100} placeholder="例如：实训奖励、误发纠正" /></Form.Item>
-        <Form.Item name="adminPassword" label="管理员登录密码" rules={[{ required: true, message: "请输入管理员密码" }]} extra="每次调整都需核验，防止他人仅凭未退出的后台会话批量发放积分。"><Input.Password autoComplete="current-password" /></Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>确认调整</Button>
       </Form>
     </Modal>

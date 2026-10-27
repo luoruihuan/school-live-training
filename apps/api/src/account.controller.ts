@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, type UserRequest } from "./auth.guard.js";
-import { hashPassword, matchesPassword } from "./auth.service.js";
+import { hashPassword } from "./auth.service.js";
 import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { ChatGateway } from "./chat.gateway.js";
@@ -47,7 +47,7 @@ export class AccountController {
   async reset(@Req() request: UserRequest, @Param("id") id: string, @Body() body: unknown) {
     this.admin(request);
     const password = stringField(object(body), "password", 200);
-    if (password.length < 12) throw new BadRequestException("密码至少 12 位");
+    if (password.length < 6) throw new BadRequestException("密码至少 6 位");
     const passwordHash = await hashPassword(password);
     const result = await this.prisma.$transaction(async (tx) => {
       const users = await tx.$queryRaw<{ role: string }[]>`SELECT role FROM User WHERE id = ${id} FOR UPDATE`;
@@ -70,13 +70,8 @@ export class AccountController {
     const points = integerField(input, "points", mode === "SET" ? 0 : 1, mode === "SET" ? 2_000_000_000 : 1_000_000);
     const requestKey = stringField(input, "requestKey", 100);
     if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestKey)) throw new BadRequestException("积分提交标识不正确");
-    const adminPassword = stringField(input, "adminPassword", 200);
     const reason = optionalString(input, "reason", 100) || (mode === "ADD" ? "管理员发放" : "管理员调整");
     return withUserLock(this.prisma, id, async (tx) => {
-      const actor = await tx.user.findUnique({ where: { id: request.currentUser.id }, select: { isActive: true, passwordHash: true } });
-      if (!actor?.isActive || !(await matchesPassword(adminPassword, actor.passwordHash))) {
-        throw new ForbiddenException("管理员密码不正确");
-      }
       const previous = await tx.pointLedger.findUnique({ where: { userId_requestKey: { userId: id, requestKey } } });
       if (previous) {
         if (previous.actorId !== request.currentUser.id || previous.reason !== reason ||

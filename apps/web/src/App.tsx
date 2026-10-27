@@ -66,7 +66,7 @@ function Session() {
       <p className="muted">使用学校分配的账号登录，开始{adminEntry ? "管理实训" : "今天的学习"}。</p>
       {error && <Alert type="error" title={error} showIcon className="spaced" />}
       <Form layout="vertical" onFinish={login} requiredMark={false} size="large">
-        <Form.Item label="账号邮箱" name="email" rules={[{ required: true, message: "请输入账号邮箱" }, { type: "email", message: "请输入有效邮箱" }]}><Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入学校分配的邮箱" maxLength={254} /></Form.Item>
+        <Form.Item label="账号" name="email" rules={[{ required: true, message: "请输入账号" }]}><Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入学校分配的账号" maxLength={100} /></Form.Item>
         <Form.Item label="登录密码" name="password" rules={[{ required: true, message: "请输入密码" }]}><Input.Password prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" maxLength={200} /></Form.Item>
         <Button type="primary" htmlType="submit" loading={busy} block icon={<ArrowRightOutlined />}>进入{adminEntry ? "工作台" : "课堂"}</Button>
       </Form>

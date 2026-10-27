@@ -58,7 +58,6 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
     await Promise.all(Array.from({ length: 5 }, () => accounts.topup(admin, student.id, { points: 300, requestKey: key, adminPassword: "AdminVerification123!" })));
     await accounts.topup(admin, student.id, { points: 300, requestKey: key, adminPassword: "AdminVerification123!" });
     await assert.rejects(accounts.topup(request, student.id, { points: 300, requestKey: crypto.randomUUID(), adminPassword: "AdminVerification123!" }), /仅管理员/);
-    await assert.rejects(accounts.topup(admin, student.id, { points: 300, requestKey: crypto.randomUUID(), adminPassword: "wrong-password" }), /密码不正确/);
     await assert.rejects(accounts.topup(admin, student.id, { points: 301, requestKey: key, adminPassword: "AdminVerification123!" }), /提交标识/);
     assert.equal((await db.user.findUniqueOrThrow({ where: { id: student.id } })).pointsBalance, 300);
     const entries = await db.pointLedger.findMany({ where: { userId: student.id } });

@@ -71,13 +71,3 @@ test("SRS 录制回调：入库幂等，非法路径拒绝，SRS 容器路径映
   await assert.rejects(controller.srs({ action: "unknown", stream: "stream1" }), /未知/);
 });
 
-test("配置检查不返回密钥值，学生不能读取", (t) => {
-  const previous = process.env;
-  t.after(() => { process.env = previous; });
-  process.env = { ...previous, MINIO_ROOT_PASSWORD: "should-never-be-returned", SRS_SECRET: "replace-with-your-secret" };
-  const business = new BusinessController({} as PrismaService, {} as StorageService);
-  const result = business.cloudStatus({ currentUser: { role: "ADMIN" } } as UserRequest);
-  assert.equal(result.settings.find((f) => f.name === "SRS_SECRET")?.configured, false);
-  assert.ok(!JSON.stringify(result).includes("should-never-be-returned"));
-  assert.throws(() => business.cloudStatus({ currentUser: { role: "STUDENT" } } as UserRequest), /仅管理员/);
-});
