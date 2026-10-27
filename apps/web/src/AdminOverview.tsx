@@ -5,27 +5,19 @@ import { api } from "./api";
 import type { Platform } from "./usePlatform";
 import { RoomStatus } from "./ui";
 
-type Destination = "rooms" | "stores" | "products" | "orders" | "cloud";
+type Destination = "rooms" | "stores" | "products" | "orders";
 
-export function AdminOverview({ data, isAdmin, navigate }: { data: Platform; isAdmin: boolean; navigate: (tab: Destination) => void }) {
+export function AdminOverview({ data, navigate }: { data: Platform; navigate: (tab: Destination) => void }) {
   const [pendingOrders, setPendingOrders] = useState<number>();
-  const [cloudConfigured, setCloudConfigured] = useState<boolean>();
   useEffect(() => {
     let active = true;
     api<{ pendingOrders: number }>("/staff/overview").then((value) => { if (active) setPendingOrders(value.pendingOrders); }).catch(() => { if (active) setPendingOrders(undefined); });
     return () => { active = false; };
   }, []);
-  useEffect(() => {
-    if (!isAdmin) return;
-    let active = true;
-    api<{ settings: { configured: boolean }[] }>("/admin/cloud-status").then((value) => { if (active) setCloudConfigured(value.settings.every((item) => item.configured)); }).catch(() => { if (active) setCloudConfigured(undefined); });
-    return () => { active = false; };
-  }, [isAdmin]);
   const steps = [
     { label: "创建店铺", detail: "设置实训店铺资料", status: data.stores.length ? "已完成" : "待处理", target: "stores" as const },
     { label: "创建直播间", detail: "填写课堂名称并设为待开播", status: data.rooms.length ? "已完成" : "待处理", target: "rooms" as const },
     { label: "绑定本场商品", detail: "学生才能在课堂看到小黄车", status: data.rooms.some((room) => room.productCount > 0) ? "已完成" : "待处理", target: "rooms" as const },
-    ...(isAdmin ? [{ label: "检查直播与回放", detail: cloudConfigured ? "配置已填写，仍需真实开播验证" : "首次开课前完成云接入配置", status: cloudConfigured ? "待实测" : "待配置", target: "cloud" as const }] : [])
   ];
   return <>
     <div className="stat-grid">

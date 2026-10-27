@@ -8,9 +8,7 @@ import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import type { Product } from "./generated/prisma/client.js";
-import { quotaState } from "./usage-quota.js";
 import { withUserLock } from "./user-transaction.js";
-import { cloudConfiguration, recordingRetentionDays } from "./cloud-config.js";
 import { visibleRoom } from "./room-access.js";
 import { publishToken } from "./cloud-webhook.controller.js";
 
@@ -30,32 +28,19 @@ export class BusinessController {
     return { ...product, imageUrl: `/api/product-images/${product.id}` };
   }
 
-  private async assertUsageAvailable(): Promise<void> {
-    const quota = await this.prisma.serviceQuota.findUnique({ where: { id: 1 } });
-    if (!quota) throw new ServiceUnavailableException("请先配置年度直播流量额度");
-    const days = await this.prisma.usageDaily.findMany({ select: { date: true, billedMb: true } });
-    const state = quotaState(quota.startDate, quota.annualGb, days, new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10));
-    if (state.blocked) throw new ServiceUnavailableException(`${state.reason}，暂不生成新的直播地址`);
-  }
-
-  @Get("admin/cloud-status")
-  cloudStatus(@Req() request: UserRequest) {
-    if (request.currentUser.role !== "ADMIN") throw new ForbiddenException("仅管理员可查看云接入状态");
-    return { settings: cloudConfiguration(), secureCookie: process.env.COOKIE_SECURE === "true", retentionDays: recordingRetentionDays() };
-  }
-
   @Post("users")
   async createUser(@Req() request: UserRequest, @Body() body: unknown) {
     if (request.currentUser.role !== "ADMIN") throw new ForbiddenException("仅管理员可创建账号");
     const input = object(body);
-    const email = stringField(input, "email", 254).toLowerCase();
+    const email = stringField(input, "email", 100).toLowerCase();
     const password = stringField(input, "password", 200);
-    if (!email.includes("@") || password.length < 12) throw new BadRequestException("邮箱或密码格式不正确");
+    if (!/^[a-zA-Z0-9._@-]{2,100}$/.test(email)) throw new BadRequestException("账号仅支持字母、数字、点、下划线、@、中划线");
+    if (password.length < 6) throw new BadRequestException("初始密码至少 6 位");
     const role = input.role;
     if (role !== "TEACHER" && role !== "STUDENT") throw new BadRequestException("角色不正确");
-    if (await this.prisma.user.findUnique({ where: { email } })) throw new BadRequestException("该邮箱已存在");
+    if (await this.prisma.user.findUnique({ where: { email } })) throw new BadRequestException("该账号已存在");
     return this.prisma.user.create({
-      data: { email, displayName: stringField(input, "displayName", 80), passwordHash: await hashPassword(password), role, mustChangePassword: true },
+      data: { email, displayName: optionalString(input, "displayName", 80) || email, passwordHash: await hashPassword(password), role, mustChangePassword: true },
       select: { id: true, email: true, displayName: true, role: true, createdAt: true }
     });
   }
@@ -147,7 +132,6 @@ export class BusinessController {
   async publishAddress(@Req() request: UserRequest, @Param("id") id: string) {
     requireStaff(request.currentUser);
     const room = await this.room(id, request);
-    await this.assertUsageAvailable();
     const domain = liveDomain();
     const expire = Math.floor(Date.now() / 1000) + 60 * 60;
     const token = publishToken(room.streamName, expire);
@@ -160,7 +144,6 @@ export class BusinessController {
   @Get("rooms/:id/playback")
   async playbackAddress(@Param("id") id: string, @Req() request: UserRequest) {
     const room = await this.room(id, request);
-    await this.assertUsageAvailable();
     const domain = liveDomain();
     return {
       flv: `https://${domain}/live/${room.streamName}.flv`,
