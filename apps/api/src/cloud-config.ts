@@ -13,7 +13,7 @@ export function cloudConfiguration() {
 }
 
 export function recordingRetentionDays() {
-  const days = Number(process.env.RECORDING_RETENTION_DAYS ?? 30);
+  const days = Number(process.env.RECORDING_RETENTION_DAYS ?? 180);
   if (!Number.isInteger(days) || days < 1 || days > 3650) throw new Error("RECORDING_RETENTION_DAYS 须为 1～3650 的整数");
   return days;
 }
