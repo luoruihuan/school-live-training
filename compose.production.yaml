@@ -101,7 +101,7 @@ services:
     ports:
       - "${WEB_BIND:-0.0.0.0}:1935:1935"
     volumes:
-      - ./deploy/srs/srs.conf:/usr/local/srs/conf/srs.conf:ro
+      - ./deploy/srs/srs.conf:/usr/local/srs/conf/docker.conf:ro
       - srs_recordings:/data/recordings
       - srs_hls:/data/hls
     depends_on:
