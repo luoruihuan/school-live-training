@@ -13,6 +13,7 @@ export type ManageTab = "rooms" | "stores" | "products" | "coupons";
 export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Platform; onNavigate: (tab: ManageTab) => void }) {
   const [editor, setEditor] = useState<{ kind: EditorKind; entity?: Store | Room | Product; roomId?: string }>();
   const [binding, setBinding] = useState<Room>();
+  const [couponsRoom, setCouponsRoom] = useState<Room>();
   const [publish, setPublish] = useState<{ title: string; url: string; expiresAt: string }>();
   const [setupRoomId, setSetupRoomId] = useState<string>();
   const [preview, setPreview] = useState<{ room: Room; mode: "live" | "replay" | "mock" }>();
@@ -47,7 +48,8 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
     {tab === "coupons" && <p className="muted small">显示有效期内的优惠券；每人每券限领一次，兑换时抵扣适用商品的积分。</p>}
     {editor && <EntityEditor {...editor} data={data} close={() => setEditor(undefined)} />}
     {binding && <RoomProducts room={binding} data={data} close={() => setBinding(undefined)} />}
-    {setupRoomId && data.rooms.find((room) => room.id === setupRoomId) && <RoomSetup room={data.rooms.find((room) => room.id === setupRoomId)!} close={() => setSetupRoomId(undefined)} edit={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setEditor({ kind: "room", entity: room }); }} bind={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setBinding(room); }} coupon={() => { setEditor({ kind: "coupon", roomId: setupRoomId }); setSetupRoomId(undefined); }} publish={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; void data.run(async () => { const result = await api<{ url: string; expiresAt: string }>(`/rooms/${room.id}/publish`); setPublish({ title: room.title, ...result }); setSetupRoomId(undefined); }, "推流信息已获取"); }} preview={(mode) => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setPreview({ room, mode }); }} />}
+    {couponsRoom && <RoomCoupons room={couponsRoom} data={data} close={() => setCouponsRoom(undefined)} create={() => { setEditor({ kind: "coupon", roomId: couponsRoom.id }); setCouponsRoom(undefined); }} />}
+    {setupRoomId && data.rooms.find((room) => room.id === setupRoomId) && <RoomSetup room={data.rooms.find((room) => room.id === setupRoomId)!} close={() => setSetupRoomId(undefined)} edit={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setEditor({ kind: "room", entity: room }); }} bind={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setBinding(room); }} coupon={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setCouponsRoom(room); }} publish={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; void data.run(async () => { const result = await api<{ url: string; expiresAt: string }>(`/rooms/${room.id}/publish`); setPublish({ title: room.title, ...result }); setSetupRoomId(undefined); }, "推流信息已获取"); }} preview={(mode) => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setPreview({ room, mode }); }} />}
     <Modal title={preview && `${preview.room.title} · ${preview.mode === "replay" ? "课程回放" : "课堂预览"}`} open={!!preview} onCancel={() => setPreview(undefined)} footer={<Button onClick={() => setPreview(undefined)}>关闭</Button>} width={760} destroyOnHidden>
       {preview?.mode === "replay" ? <Replay roomId={preview.room.id} /> : preview && <><Player roomId={preview.room.id} previewMock={preview.mode === "mock"} /><Chat roomId={preview.room.id} canModerate /></>}
     </Modal>
@@ -72,6 +74,21 @@ function RoomSetup({ room, close, edit, bind, coupon, publish, preview }: { room
       <div className="room-setup-row"><span>学生入口</span><Button icon={<LinkOutlined />} onClick={() => void navigator.clipboard.writeText(`${location.origin}/?room=${room.id}`).then(() => message.success("课堂链接已复制")).catch(() => message.error("复制失败，请复制浏览器地址"))}>复制观看链接</Button></div>
       {import.meta.env.DEV && <div className="room-setup-row"><span>本地视频演示</span><Button onClick={() => preview("mock")}>用桌面 MP4 预览</Button></div>}
       <div className="room-setup-row"><span>课程回放</span><Tag>{room.recordingCount} 条可看</Tag><Button onClick={() => preview("replay")}>查看回放</Button></div>
+    </Space>
+  </Modal>;
+}
+
+function RoomCoupons({ room, data, close, create }: { room: Room; data: Platform; close: () => void; create: () => void }) {
+  const coupons = data.coupons.filter((coupon) => coupon.roomId === room.id);
+  return <Modal open title={`${room.title} · 本场优惠券`} onCancel={close} footer={<Space><Button onClick={create} type="primary">新建本场优惠券</Button><Button onClick={close}>完成</Button></Space>}>
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <p className="muted small" style={{ marginBottom: 0 }}>这里只显示属于本直播间的优惠券；也可在「优惠券」页统一管理后，在此查看。停用后已领取但未使用的券也将无法抵扣。</p>
+      {coupons.length ? coupons.map((coupon) => <div className="binding-row" key={coupon.id}>
+        <span><Tag color="orange">−{coupon.pointsDiscount} 积分</Tag>{coupon.name}<small className="muted"> · 有效至 {new Date(coupon.expiresAt).toLocaleString("zh-CN")}</small></span>
+        {new Date(coupon.expiresAt).getTime() > Date.now()
+          ? <Popconfirm title="停用后已领取未使用的券也无法抵扣，确认停用？" onConfirm={() => void data.run(() => patch(`/coupons/${coupon.id}/expire`, {}), "优惠券已停用")}><Button type="text" danger size="small" disabled={data.busy}>停用</Button></Popconfirm>
+          : <Tag>已停用 / 过期</Tag>}
+      </div>) : <NoData text="本场还没有优惠券" />}
     </Space>
   </Modal>;
 }
