@@ -1,0 +1,252 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+
+enum RoomStatus {
+  DRAFT
+  READY
+  LIVE
+  ENDED
+}
+
+enum FulfillmentMethod {
+  PICKUP
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING_PICKUP
+  PENDING_DELIVERY
+  COMPLETED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  displayName  String
+  passwordHash String
+  role         Role      @default(STUDENT)
+  isActive     Boolean   @default(true)
+  mustChangePassword Boolean @default(false)
+  pointsBalance Int      @default(0)
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  cartItems    CartItem[]
+  orders       Order[]
+  coupons      UserCoupon[]
+  messages     ChatMessage[]
+  mutes        RoomMute[]
+  pointEntries PointLedger[] @relation("PointOwner")
+  pointActions PointLedger[] @relation("PointActor")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Store {
+  id          String    @id @default(cuid())
+  name        String
+  description String    @default("") @db.VarChar(1000)
+  createdAt   DateTime  @default(now())
+  rooms       Room[]
+  products    Product[]
+  coupons     Coupon[]
+}
+
+model Room {
+  id           String        @id @default(cuid())
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  title        String
+  streamName   String        @unique
+  status       RoomStatus    @default(DRAFT)
+  lastEventAt  DateTime?
+  createdAt    DateTime      @default(now())
+  products     RoomProduct[]
+  messages     ChatMessage[]
+  recordings   Recording[]
+  mutes        RoomMute[]
+  coupons      Coupon[]
+  @@index([storeId])
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  storeId     String
+  store       Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name        String
+  description String        @default("") @db.VarChar(1000)
+  pointsPrice Int
+  pickupPoint String        @db.VarChar(200)
+  imageUrl    String?       @db.VarChar(500)
+  imageKey    String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  rooms       RoomProduct[]
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+  @@index([storeId])
+}
+
+model RoomProduct {
+  roomId    String
+  productId String
+  position  Int     @default(0)
+  room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@id([roomId, productId])
+}
+
+model CartItem {
+  userId    String
+  productId String
+  quantity  Int      @default(1)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@id([userId, productId])
+}
+
+model Coupon {
+  id            String       @id @default(cuid())
+  storeId       String
+  store         Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  roomId        String
+  room          Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name          String
+  pointsDiscount Int
+  expiresAt     DateTime
+  createdAt     DateTime     @default(now())
+  claims        UserCoupon[]
+  orders        Order[]
+  @@index([storeId])
+  @@index([roomId])
+}
+
+model UserCoupon {
+  id        String    @id @default(cuid())
+  userId    String
+  couponId  String
+  claimedAt DateTime  @default(now())
+  usedAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coupon    Coupon    @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  @@unique([userId, couponId])
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  couponId      String?
+  coupon        Coupon?     @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  pointsSubtotal Int
+  pointsDiscount Int        @default(0)
+  pointsTotal  Int
+  fulfillmentMethod FulfillmentMethod
+  deliveryAddress String?  @db.VarChar(200)
+  status        OrderStatus
+  requestKey    String      @db.VarChar(100)
+  createdAt     DateTime    @default(now())
+  items         OrderItem[]
+  pointEntries  PointLedger[]
+  @@index([userId, createdAt])
+  @@unique([userId, requestKey])
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  productId  String
+  name       String
+  pointsPrice Int
+  pickupPoint String   @db.VarChar(200)
+  quantity   Int
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+}
+
+model PointLedger {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("PointOwner", fields: [userId], references: [id], onDelete: Restrict)
+  actorId      String?
+  actor        User?    @relation("PointActor", fields: [actorId], references: [id], onDelete: SetNull)
+  delta        Int
+  balanceAfter Int
+  reason       String   @db.VarChar(100)
+  orderId      String?
+  order        Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  requestKey   String   @db.VarChar(100)
+  createdAt    DateTime @default(now())
+  @@unique([userId, requestKey])
+  @@index([userId, createdAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  roomId    String
+  userId    String
+  content   String   @db.VarChar(500)
+  isHidden  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([roomId, createdAt])
+}
+
+model RoomMute {
+  roomId String
+  userId String
+  until  DateTime
+  room   Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([roomId, userId])
+}
+
+model Recording {
+  id           String   @id @default(cuid())
+  roomId       String
+  providerId   String   @unique
+  objectKey    String?
+  sourceUrl    String?  @db.Text
+  durationSecs Int?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  @@index([roomId, createdAt])
+}
+
+model ServiceQuota {
+  id          Int      @id @default(1)
+  startDate   String   @db.VarChar(10)
+  annualGb    Int      @default(10000)
+  updatedAt   DateTime @updatedAt
+}
+
+model UsageDaily {
+  date       String   @id @db.VarChar(10)
+  billedMb   Float
+  source     String   @default("MANUAL") @db.VarChar(20)
+  updatedAt  DateTime @updatedAt
+}

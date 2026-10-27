@@ -1,0 +1,10 @@
+[Unit]
+Description=Live training Docker database backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/live-training
+ExecStart=/bin/bash /srv/live-training/scripts/docker-backup-db.sh
+UMask=0077
