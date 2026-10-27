@@ -3,6 +3,7 @@ name: live-training
 x-api-environment: &api-environment
   DATABASE_URL: mysql://live:${MYSQL_PASSWORD:?设置 MYSQL_PASSWORD}@mysql:3306/live_training
   COOKIE_SECURE: "true"
+  APP_DOMAIN: ${APP_DOMAIN:?设置业务域名}
   APP_ORIGIN: https://${APP_DOMAIN:?设置业务域名}
   SRS_SECRET: ${SRS_SECRET:?设置 SRS 推流鉴权密钥}
   MINIO_ENDPOINT: http://minio:9000
