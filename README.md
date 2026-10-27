@@ -51,7 +51,7 @@
 
 - **SRS**（`deploy/srs/srs.conf`）：OBS 推流到 `rtmp://域名:1935/live/{streamName}`（管理端生成带 HMAC token 的限时地址）；观看经 nginx 反代 `https://域名/live/{streamName}.flv|.m3u8`；录制（DVR）结束后回调 API 自动上传回放。需在云防火墙/安全组放行 **TCP 1935**（推流）。
 - **MinIO**：S3 兼容对象存储，存商品图与回放 MP4，仅容器网络可达（不对外暴露端口）；回放播放经 API 登录校验后流式转发（支持 Range 拖动）。
-- **回放清理**：API 每 6 小时清理超过 `RECORDING_RETENTION_DAYS`（默认 180 天）的回放对象与记录。
+- **回放清理**：双重策略——超过 `RECORDING_RETENTION_DAYS`（默认 180 天）的按期删除；磁盘使用率 ≥ 85% 时提前清理最旧的回放（降到 75% 停止），但创建未满 `RECORDING_MIN_RETENTION_DAYS`（默认 90 天 = 3 个月）的绝不提前删。每 6 小时执行一次。
 - 敏感配���（`SRS_SECRET`、`MINIO_ROOT_USER/PASSWORD`）只保存在服务端 `deploy/.env`，教师在管理页面复制限时推流地址交给 OBS 使用。
 
 ## 运行模式与功能边界
