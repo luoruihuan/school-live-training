@@ -3,6 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { StorageService } from "./storage.service.js";
 import type { PrismaService } from "./prisma.service.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 type RecordingRow = { id: string; objectKey: string; createdAt: Date; expiresAt: Date };
 

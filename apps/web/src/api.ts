@@ -1,4 +1,4 @@
-export type Role = "ADMIN" | "TEACHER" | "STUDENT";
+export type Role = "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "STUDENT";
 export type User = { id: string; email: string; displayName: string; role: Role; mustChangePassword: boolean };
 export type ManagedUser = User & { isActive: boolean; pointsBalance: number; createdAt: string };
 export type Store = { id: string; name: string; description: string };

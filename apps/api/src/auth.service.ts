@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { BadRequestException, HttpException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "./prisma.service.js";
 import { withUserLock } from "./user-transaction.js";
+import { AuditService } from "./audit.service.js";
 
 const scrypt = promisify(scryptCallback);
 const sessionDurationMs = 7 * 24 * 60 * 60 * 1000;
@@ -32,7 +33,7 @@ export class AuthService {
   readonly revokedSessions = new EventEmitter();
   // shortcut: 单进程登录限频，部署多实例前改为共享限频存储；生产反代另设 IP 限频。
   private readonly attempts = new Map<string, { count: number; until: number }>();
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
   async login(email: string, password: string) {
     email = email.toLowerCase();
@@ -46,6 +47,7 @@ export class AuthService {
     this.attempts.set(email, attempt);
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user?.isActive || !(await matchesPassword(password, user.passwordHash))) {
+      await this.audit.log({ action: "LOGIN_FAILED", detail: `账号 ${email} 登录失败`, actorName: email });
       throw new UnauthorizedException("账号或密码错误");
     }
     const token = randomBytes(32).toString("base64url");
@@ -57,6 +59,7 @@ export class AuthService {
       });
     });
     this.attempts.delete(email);
+    await this.audit.log({ action: "LOGIN", userId: user.id, actorName: user.displayName, detail: `${user.displayName}（${user.role}）登录成功` });
     return { token, user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role, mustChangePassword: user.mustChangePassword } };
   }
 
@@ -91,13 +94,16 @@ export class AuthService {
       return sessions;
     });
     for (const session of revoked) this.revokedSessions.emit("revoked", session.tokenHash);
+    await this.audit.log({ action: "PASSWORD_CHANGED", userId: user.id, actorName: user.displayName, detail: `${user.displayName} 修改了自己的密码` });
   }
 
   async logout(token: string | undefined): Promise<void> {
     if (token) {
+      const user = await this.userForToken(token).catch(() => null);
       const hash = tokenHash(token);
       await this.prisma.session.deleteMany({ where: { tokenHash: hash } });
       this.revokedSessions.emit("revoked", hash);
+      if (user) await this.audit.log({ action: "LOGOUT", userId: user.id, actorName: user.displayName, detail: `${user.displayName} 退出登录` });
     }
   }
 }

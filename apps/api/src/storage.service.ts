@@ -133,6 +133,9 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
         await this.prisma.recording.delete({ where: { id: item.id } }).catch(() => undefined);
       }
       if (expired.length) this.logger.log(`已清理 ${expired.length} 条过期回放（${retentionNote}）`);
+      const auditCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+      const removedLogs = await this.prisma.auditLog.deleteMany({ where: { createdAt: { lt: auditCutoff } } });
+      if (removedLogs.count) this.logger.log(`已清理 ${removedLogs.count} 条过期操作日志`);
     } catch (error) {
       this.logger.error(`回放清理任务失败：${String(error)}`);
     }

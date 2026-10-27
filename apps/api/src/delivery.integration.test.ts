@@ -10,6 +10,8 @@ import { AuthService, hashPassword } from "./auth.service.js";
 import { StorageService } from "./storage.service.js";
 import type { UserRequest } from "./auth.guard.js";
 import { ChatGateway } from "./chat.gateway.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 test("真实数据库：结算并发、数量边界、账号生命周期和角色权限", { skip: process.env.RUN_DB_TESTS !== "true" }, async (t) => {
   const db = new PrismaService();
@@ -33,10 +35,10 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
   const request = { currentUser: student } as unknown as UserRequest;
   const admin = { currentUser: adminUser } as unknown as UserRequest;
   const teacher = { currentUser: { id: "test-teacher", role: "TEACHER" } } as UserRequest;
-  const business = new BusinessController(db, new StorageService({} as never));
-  const commerce = new CommerceController(db);
-  const auth = new AuthService(db);
-  const accounts = new AccountController(db, new ChatGateway(auth, db));
+  const business = new BusinessController(db, new StorageService({} as never), audit);
+  const commerce = new CommerceController(db, audit);
+  const auth = new AuthService(db, audit);
+  const accounts = new AccountController(db, new ChatGateway(auth, db), audit);
 
   await t.test("学生不能通过商品列表或购物车进入草稿课堂", async () => {
     await db.room.update({ where: { id: room.id }, data: { status: "DRAFT" } });

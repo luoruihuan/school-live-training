@@ -7,6 +7,8 @@ import type { AuthService } from "./auth.service.js";
 import type { PrismaService } from "./prisma.service.js";
 import { EventEmitter } from "node:events";
 import { AuthService as RealAuthService, tokenHash } from "./auth.service.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 test("停用或重置后断开该用户全部互动连接，其他用户不受影响", () => {
   const disconnected: string[] = [];
@@ -17,7 +19,7 @@ test("停用或重置后断开该用户全部互动连接，其他用户不受�
 });
 
 test("退出只断开该会话的连接，其他设备会话保留", async () => {
-  const auth = new RealAuthService({ session: { deleteMany: async () => ({ count: 1 }) } } as unknown as PrismaService);
+  const auth = new RealAuthService({ session: { deleteMany: async () => ({ count: 1 }) } } as unknown as PrismaService, audit);
   const disconnected: string[] = [];
   const chat = new ChatGateway(auth, {} as PrismaService);
   chat.server = { sockets: { sockets: new Map(["same-tab", "second-tab", "other-device"].map((id) => [id, { data: { sessionHash: tokenHash(id === "other-device" ? "other-token" : "shared-token") }, disconnect: () => disconnected.push(id) }])) } } as unknown as Server;

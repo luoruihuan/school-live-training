@@ -8,6 +8,8 @@ import { UploadController } from "./upload.controller.js";
 import { StorageService } from "./storage.service.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 const room = { id: "test-room", streamName: "test-stream" };
 const prisma = {
@@ -22,7 +24,7 @@ test("旧演示配置不能绕过云服务额度与访问权限", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new BusinessController(prisma, new StorageService({} as never));
+  const controller = new BusinessController(prisma, new StorageService({} as never), audit);
   await assert.rejects(controller.publishAddress(teacher, room.id), ServiceUnavailableException);
   await assert.rejects(controller.playbackAddress(room.id, teacher), ServiceUnavailableException);
   await assert.rejects(controller.publishAddress(student, room.id), ForbiddenException);
@@ -33,7 +35,7 @@ test("无录制记录时返回空列表，不生成示例回放", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new RecordingController(prisma, new StorageService({} as never));
+  const controller = new RecordingController(prisma, new StorageService({} as never), audit);
   assert.deepEqual(await controller.recordings(room.id, teacher), []);
   await assert.rejects(controller.playback(`mock-recording-${room.id}`, teacher), NotFoundException);
 });

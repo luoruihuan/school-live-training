@@ -4,13 +4,14 @@ import { AuthGuard, type UserRequest } from "./auth.guard.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { visibleRoom } from "./room-access.js";
+import { AuditService } from "./audit.service.js";
 
 const MAX_CHUNK = 8 * 1024 * 1024;
 
 @Controller()
 @UseGuards(AuthGuard)
 export class RecordingController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
 
   @Get("rooms/:id/recordings")
   async recordings(@Param("id") id: string, @Req() request: UserRequest) {
@@ -32,6 +33,8 @@ export class RecordingController {
   async file(@Param("id") id: string, @Req() request: UserRequest, @Query() query: Record<string, unknown>, @Res() response: Response) {
     void query;
     const recording = await this.visible(id, request);
+    await this.prisma.recording.update({ where: { id }, data: { playCount: { increment: 1 } } }).catch(() => undefined);
+    await this.audit.log({ action: "REPLAY_PLAYED", userId: request.currentUser.id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 观看回放（课堂 ${recording.roomId.slice(-6).toUpperCase()}）` });
     if (!recording.objectKey || !recording.objectKey.endsWith(".mp4")) throw new ServiceUnavailableException("回放文件不可用");
     response.setHeader("Accept-Ranges", "bytes");
     response.setHeader("Content-Type", "video/mp4");

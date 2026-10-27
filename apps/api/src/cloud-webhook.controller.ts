@@ -5,6 +5,7 @@ import { object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { recordingRetentionDays } from "./cloud-config.js";
+import { AuditService } from "./audit.service.js";
 
 const SRS_RAW_DIR = "/var/srs-recordings";
 const SRS_CONTAINER_DIR = "/data/recordings";
@@ -31,7 +32,7 @@ function verifyPublishToken(streamName: string, param: string): boolean {
 
 @Controller("webhooks")
 export class CloudWebhookController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
 
   @Post("srs")
   @HttpCode(200)
@@ -47,9 +48,18 @@ export class CloudWebhookController {
         throw new NotFoundException("推流鉴权失败");
       }
       const eventAt = new Date();
+      const patch: { status: "LIVE" | "ENDED"; lastEventAt: Date; lastPublishAt?: Date; liveSecondsTotal?: { increment: number } } = {
+        status: action === "on_publish" ? "LIVE" : "ENDED", lastEventAt: eventAt
+      };
+      if (action === "on_publish") patch.lastPublishAt = eventAt;
+      else if (room.lastPublishAt) patch.liveSecondsTotal = { increment: Math.max(0, Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 1000)) };
       await this.prisma.room.updateMany({
         where: { id: room.id, OR: [{ lastEventAt: null }, { lastEventAt: { lt: eventAt } }] },
-        data: { status: action === "on_publish" ? "LIVE" : "ENDED", lastEventAt: eventAt }
+        data: patch
+      });
+      await this.audit.log({
+        action: action === "on_publish" ? "PUBLISH_START" : "PUBLISH_STOP",
+        detail: `课堂「${room.title}」${action === "on_publish" ? "开始直播" : `结束直播${room.lastPublishAt ? `（时长约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}`}`
       });
       return 0;
     }
@@ -70,10 +80,11 @@ export class CloudWebhookController {
       const createdAt = new Date();
       await this.prisma.recording.create({
         data: {
-          providerId, roomId: room.id, objectKey, durationSecs: null, createdAt,
+          providerId, roomId: room.id, objectKey, durationSecs: null, sizeMb: Math.max(1, Math.round(sizeBytes / 1024 / 1024)), createdAt,
           expiresAt: new Date(createdAt.getTime() + recordingRetentionDays() * 24 * 60 * 60 * 1000)
         }
       });
+      await this.audit.log({ action: "RECORDING_SAVED", detail: `课堂「${room.title}」新增回放（约 ${Math.max(1, Math.round(sizeBytes / 1024 / 1024))} MB）` });
       await unlink(localPath).catch(() => undefined);
       return 0;
     }

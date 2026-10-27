@@ -7,6 +7,8 @@ import { BusinessController } from "./business.controller.js";
 import { StorageService } from "./storage.service.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 function mockStorage(rawDir: string): StorageService {
   return {
@@ -27,7 +29,7 @@ test("SRS 推流回调校验 token：合法放行、无效拒绝、过期拒绝"
       updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; }
     }
   } as unknown as PrismaService;
-  const callback = new CloudWebhookController(prisma, mockStorage(""));
+  const callback = new CloudWebhookController(prisma, mockStorage(""), audit);
   const expire = Math.floor(Date.now() / 1000) + 3600;
   const token = publishToken("stream1", expire);
   await callback.srs({ action: "on_publish", stream: "stream1", param: `?token=${token}&expire=${expire}` });
@@ -56,7 +58,7 @@ test("SRS 录制回调：入库幂等，非法路径拒绝，SRS 容器路径映
     uploadRecordingFile: async () => undefined,
     deleteRecording: async () => undefined
   } as unknown as StorageService;
-  const controller = new CloudWebhookController(prisma, storage);
+  const controller = new CloudWebhookController(prisma, storage, audit);
   const fileName = "stream1-1698400000.mp4";
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });

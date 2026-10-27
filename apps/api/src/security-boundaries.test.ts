@@ -10,6 +10,8 @@ import { StorageService } from "./storage.service.js";
 import { HealthController } from "./health.controller.js";
 import type { PrismaService } from "./prisma.service.js";
 import type { UserRequest } from "./auth.guard.js";
+import { AuditService } from "./audit.service.js";
+const audit = { log: async () => undefined } as unknown as AuditService;
 
 const student = { currentUser: { id: "student-1", role: "STUDENT" } } as UserRequest;
 const teacher = { currentUser: { id: "teacher-1", role: "TEACHER" } } as UserRequest;
@@ -25,13 +27,13 @@ test("草稿课堂在服务端不能被学生列表、观看、回放和领券�
     coupon: { findUnique: async () => ({ id: "coupon-1", room, expiresAt: new Date(Date.now() + 60_000) }) },
     userCoupon: { upsert: async () => { throw new Error("不应领券"); } }
   } as unknown as PrismaService;
-  const business = new BusinessController(prisma, new StorageService({} as never));
+  const business = new BusinessController(prisma, new StorageService({} as never), audit);
   assert.deepEqual(await business.rooms(student), []);
   assert.equal((await business.rooms(teacher)).length, 1);
   await assert.rejects(business.room(room.id, student), /直播间不存在/);
   await assert.rejects(business.playbackAddress(room.id, student), /直播间不存在/);
-  await assert.rejects(new RecordingController(prisma, new StorageService({} as never)).playback("recording-1", student), /直播间不存在/);
-  await assert.rejects(new CommerceController(prisma).claimCoupon(student, "coupon-1"), /直播间不存在/);
+  await assert.rejects(new RecordingController(prisma, new StorageService({} as never), audit).playback("recording-1", student), /直播间不存在/);
+  await assert.rejects(new CommerceController(prisma, audit).claimCoupon(student, "coupon-1"), /直播间不存在/);
 });
 
 test("播放签名与腾讯云 1 秒 Key 有效时间合计为四小时", async (t) => {
@@ -44,7 +46,7 @@ test("播放签名与腾讯云 1 秒 Key 有效时间合计为四小时", async 
     usageDaily: { findMany: async () => [] }
   } as unknown as PrismaService;
   const before = Date.now();
-  const result = await new BusinessController(prisma, new StorageService({} as never)).playbackAddress("room-1", student);
+  const result = await new BusinessController(prisma, new StorageService({} as never), audit).playbackAddress("room-1", student);
   const after = Date.now();
   assert.equal(result.flv, "https://live.school.test/live/stream-1.flv");
   assert.equal(result.hls, "https://live.school.test/live/stream-1.m3u8");
