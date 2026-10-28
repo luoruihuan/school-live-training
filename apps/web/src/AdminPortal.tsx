@@ -42,8 +42,8 @@ export default function AdminPortal({ user, logout }: { user: User; logout: () =
         {data.loading ? <div className="loading-panel"><Spin /></div> : <>
           {tab === "overview" && <AdminOverview data={data} navigate={setTab} />}
           {(["rooms", "stores", "products", "coupons"] as Tab[]).includes(tab) && <Management key={tab} tab={tab as ManageTab} data={data} onNavigate={setTab} />}
-          {tab === "orders" && <StaffOrders />}{tab === "accounts" && user.role === "ADMIN" && <Accounts data={data} />}
-          {tab === "points" && user.role === "ADMIN" && <PointsManagement />}
+          {tab === "orders" && <StaffOrders />}{tab === "accounts" && ["ADMIN", "SUPER_ADMIN"].includes(user.role) && <Accounts data={data} />}
+          {tab === "points" && ["ADMIN", "SUPER_ADMIN"].includes(user.role) && <PointsManagement />}
           {tab === "ops" && user.role === "SUPER_ADMIN" && <OpsDashboard />}
         </>}
       </Layout.Content><footer className="admin-footer">校园直播实训平台 · 管理工作台</footer></Layout>
