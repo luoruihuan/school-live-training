@@ -13,3 +13,4 @@ backups/
 deploy/tls/
 deploy/acme/
 docs/
+code-review-report-*.html

@@ -11,6 +11,8 @@ import { visibleRoom } from "./room-access.js";
 import { allowedOrigin } from "./request-security.js";
 
 type ChatInput = { roomId?: unknown; content?: unknown };
+type RoomStatus = "DRAFT" | "READY" | "LIVE" | "ENDED";
+type JoinAck = { ok: boolean; status?: RoomStatus; message?: string };
 
 @Injectable()
 @WebSocketGateway({ transports: ["websocket"], allowRequest: (request: { headers: { origin?: string } }, callback: (error: string | null, success: boolean) => void) => callback(null, allowedOrigin(request.headers.origin)) })
@@ -47,16 +49,16 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
   }
 
   @SubscribeMessage("join-room")
-  async joinRoom(@ConnectedSocket() client: Socket, @MessageBody() roomId: unknown): Promise<{ ok: boolean; message?: string }> {
+  async joinRoom(@ConnectedSocket() client: Socket, @MessageBody() roomId: unknown): Promise<JoinAck> {
     try {
       const user = await this.auth.userForToken(cookieToken(client.handshake));
       if (user.mustChangePassword) throw new UnauthorizedException("请先修改初始密码");
       if (typeof roomId !== "string") {
         return { ok: false, message: "直播间不存在" };
       }
-      visibleRoom(await this.prisma.room.findUnique({ where: { id: roomId } }), user.role);
+      const room = visibleRoom(await this.prisma.room.findUnique({ where: { id: roomId } }), user);
       await client.join(`room:${roomId}`);
-      return { ok: true };
+      return { ok: true, status: room.status };
     } catch (error) {
       if (error instanceof NotFoundException) return { ok: false, message: "直播间不存在" };
       client.disconnect(true);
@@ -72,7 +74,10 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
       if (!input || typeof input.roomId !== "string" || !client.rooms.has(`room:${input.roomId}`)) {
         return { ok: false, message: "请先进入直播间" };
       }
-      const room = visibleRoom(await this.prisma.room.findUnique({ where: { id: input.roomId } }), user.role);
+      const room = visibleRoom(await this.prisma.room.findUnique({ where: { id: input.roomId } }), user);
+      if (room.status !== "LIVE") {
+        return { ok: false, message: "课堂未开播，暂不能发言" };
+      }
       if (typeof input.content !== "string" || !input.content.trim() || input.content.length > 500) {
         return { ok: false, message: "消息长度需为 1～500 字" };
       }
@@ -90,11 +95,6 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
         data: { roomId: input.roomId, userId: user.id, content: input.content.trim() },
         select: { id: true, roomId: true, content: true, createdAt: true, user: { select: { id: true, displayName: true, role: true } } }
       });
-      if (room.status === "DRAFT") {
-        await Promise.all([...this.server.sockets.sockets.values()]
-          .filter((member) => member.data.role === "STUDENT")
-          .map((member) => member.leave(`room:${input.roomId}`)));
-      }
       this.server.to(`room:${input.roomId}`).emit("new-message", saved);
       return { ok: true };
     } catch (error) {
@@ -106,6 +106,10 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
 
   removeMessage(roomId: string, messageId: string): void {
     this.server.to(`room:${roomId}`).emit("remove-message", { roomId, messageId });
+  }
+
+  broadcastRoomStatus(roomId: string, status: "LIVE" | "ENDED"): void {
+    this.server?.to(`room:${roomId}`).emit("room-status", { roomId, status });
   }
 
   disconnectUser(userId: string): void {

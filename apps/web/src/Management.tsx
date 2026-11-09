@@ -4,7 +4,7 @@ import { EditOutlined, LinkOutlined, PlusOutlined, VideoCameraOutlined } from "@
 import { api, pointText, patch, post, type Product, type Room, type Store } from "./api";
 import { EntityEditor, type EditorKind } from "./EntityEditor";
 import type { Platform } from "./usePlatform";
-import { NoData, ProductImage, RoomStatus } from "./ui";
+import { NoData, ProductImage, RoomStatus, TestTag } from "./ui";
 import { Player } from "./Player";
 import { Replay } from "./Replay";
 import { Chat } from "./Chat";
@@ -25,23 +25,23 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
     {!data.stores.length && tab !== "stores" && <Alert type="info" title="先创建店铺，才能添加直播间、商品和优惠券。" action={<Button size="small" onClick={() => onNavigate("stores")}>去创建店铺</Button>} className="spaced" showIcon />}
     <Card styles={{ body: { padding: 0 } }}>
       {tab === "stores" && <Table<Store> rowKey="id" dataSource={data.stores.filter((s) => s.name.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 600 }} columns={[
-        { title: "店铺", dataIndex: "name", render: (name: string) => <strong>{name}</strong> }, { title: "店铺简介", dataIndex: "description", ellipsis: true, render: (v: string) => v || "—" },
+        { title: "店铺", dataIndex: "name", render: (name: string, s: Store) => <><TestTag show={s.isTest} /><strong>{name}</strong></> }, { title: "店铺简介", dataIndex: "description", ellipsis: true, render: (v: string) => v || "—" },
         { title: "直播间", render: (_, s) => data.rooms.filter((r) => r.storeId === s.id).length }, { title: "商品", render: (_, s) => data.products.filter((p) => p.storeId === s.id).length },
         { title: "操作", render: (_, s) => <Button type="link" icon={<EditOutlined />} onClick={() => setEditor({ kind: "store", entity: s })}>编辑</Button> }
       ]} />}
       {tab === "rooms" && <Table<Room> rowKey="id" dataSource={data.rooms.filter((r) => r.title.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 850 }} columns={[
-        { title: "课堂名称", dataIndex: "title", render: (v: string) => <strong>{v}</strong> }, { title: "所属店铺", render: (_, r) => r.store.name },
+        { title: "课堂名称", dataIndex: "title", render: (v: string, r: Room) => <><TestTag show={r.isTest} /><strong>{v}</strong></> }, { title: "所属店铺", render: (_, r) => r.store.name },
         { title: "状态", render: (_, r) => <RoomStatus status={r.status} /> }, { title: "操作", render: (_, r) => <Space wrap size={0}>
           <Button type="link" onClick={() => setSetupRoomId(r.id)}>配置本场</Button><Button type="link" onClick={() => setPreview({ room: r, mode: "live" })}>查看课堂</Button>
         </Space> }
       ]} />}
       {tab === "products" && <Table<Product> rowKey="id" dataSource={data.products.filter((p) => p.name.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 750 }} columns={[
-        { title: "商品", render: (_, p) => <div className="table-product"><ProductImage product={p} /><div><strong>{p.name}</strong><p className="muted small">{data.stores.find((s) => s.id === p.storeId)?.name}</p></div></div> },
+        { title: "商品", render: (_, p) => <div className="table-product"><ProductImage product={p} /><div><TestTag show={p.isTest} /><strong>{p.name}</strong><p className="muted small">{data.stores.find((s) => s.id === p.storeId)?.name}</p></div></div> },
         { title: "兑换积分", render: (_, p) => pointText(p.pointsPrice) }, { title: "自提点", dataIndex: "pickupPoint" }, { title: "状态", render: (_, p) => <Tag color={p.isActive ? "green" : "default"}>{p.isActive ? "已上架" : "已下架"}</Tag> },
         { title: "操作", render: (_, p) => <Space><Button type="link" onClick={() => setEditor({ kind: "product", entity: p })}>编辑</Button><Popconfirm title={`确认${p.isActive ? "下架" : "上架"}该商品？`} onConfirm={() => data.run(() => patch(`/products/${p.id}`, { isActive: !p.isActive }), "商品状态已更新")}><Button type="link" danger={p.isActive} disabled={data.busy}>{p.isActive ? "下架" : "上架"}</Button></Popconfirm></Space> }
       ]} />}
       {tab === "coupons" && <Table rowKey="id" dataSource={data.coupons.filter((c) => c.name.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 600 }} columns={[
-        { title: "优惠券", dataIndex: "name" }, { title: "适用直播间", render: (_, c) => `${c.store.name} / ${c.room.title}` }, { title: "抵扣积分", render: (_, c) => pointText(c.pointsDiscount) }, { title: "到期时间", render: (_, c) => new Date(c.expiresAt).toLocaleString("zh-CN") },
+        { title: "优惠券", dataIndex: "name", render: (v: string, c) => <><TestTag show={c.isTest} />{v}</> }, { title: "适用直播间", render: (_, c) => `${c.store.name} / ${c.room.title}` }, { title: "抵扣积分", render: (_, c) => pointText(c.pointsDiscount) }, { title: "到期时间", render: (_, c) => new Date(c.expiresAt).toLocaleString("zh-CN") },
         { title: "操作", render: (_, c) => <Popconfirm title="停用后，已领取但未使用的券也将无法抵扣。确认停用？" onConfirm={() => void data.run(() => patch(`/coupons/${c.id}/expire`, {}), "优惠券已停用")}><Button type="link" danger disabled={data.busy}>停用</Button></Popconfirm> }
       ]} />}
     </Card>

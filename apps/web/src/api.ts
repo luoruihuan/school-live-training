@@ -1,11 +1,12 @@
 export type Role = "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "STUDENT";
 export type User = { id: string; email: string; displayName: string; role: Role; mustChangePassword: boolean };
-export type ManagedUser = User & { isActive: boolean; pointsBalance: number; createdAt: string };
-export type Store = { id: string; name: string; description: string };
+export type ManagedUser = User & { isActive: boolean; pointsBalance: number; createdAt: string; isTest?: boolean };
+export type Store = { id: string; name: string; description: string; isTest?: boolean };
 export type Room = {
   id: string;
   storeId: string;
   title: string;
+  isTest?: boolean;
   status: "DRAFT" | "READY" | "LIVE" | "ENDED";
   productCount: number;
   couponCount: number;
@@ -16,6 +17,7 @@ export type Product = {
   id: string;
   storeId: string;
   name: string;
+  isTest?: boolean;
   description: string;
   pointsPrice: number;
   pickupPoint: string;
@@ -25,7 +27,7 @@ export type Product = {
   isActive: boolean;
 };
 export type CartItem = { productId: string; quantity: number; product: Product & { roomIds: string[] } };
-export type Coupon = { id: string; storeId: string; roomId: string; name: string; pointsDiscount: number; expiresAt: string; store: { name: string }; room: { title: string } };
+export type Coupon = { id: string; storeId: string; roomId: string; name: string; isTest?: boolean; pointsDiscount: number; expiresAt: string; store: { name: string }; room: { title: string } };
 export type UserCoupon = { id: string; couponId: string; usedAt: string | null; coupon: Omit<Coupon, "store" | "room"> };
 export type PointEntry = { id: string; delta: number; balanceAfter: number; reason: string; createdAt: string };
 export type Points = { balance: number; entries: PointEntry[] };

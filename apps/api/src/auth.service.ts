@@ -74,6 +74,7 @@ export class AuthService {
       displayName: session.user.displayName,
       email: session.user.email,
       role: session.user.role,
+      isTest: session.user.isTest,
       mustChangePassword: session.user.mustChangePassword,
       sessionExpiresAt: session.expiresAt.toISOString()
     };

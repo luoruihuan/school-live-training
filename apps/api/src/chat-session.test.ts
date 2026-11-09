@@ -39,3 +39,30 @@ test("会话到期会主动断开空闲连接，无需等待用户发送消息",
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(disconnected, true);
 });
+
+function chatClient(): import("socket.io").Socket {
+  return Object.assign(new EventEmitter(), { data: {}, rooms: new Set(["room:room-1"]), join: async () => undefined, leave: async () => undefined, handshake: { headers: {} }, disconnect: () => undefined }) as unknown as import("socket.io").Socket;
+}
+
+test("未开播的课堂拒绝发言，开播后才能发送消息", async () => {
+  let roomStatus = "READY";
+  let created = 0;
+  const emitted: string[] = [];
+  const auth = { userForToken: async () => ({ id: "u1", role: "STUDENT", mustChangePassword: false, sessionExpiresAt: new Date(Date.now() + 3600_000).toISOString() }) } as unknown as AuthService;
+  const prisma = {
+    room: { findUnique: async () => ({ id: "room-1", status: roomStatus }) },
+    roomMute: { findUnique: async () => null },
+    chatMessage: { create: async () => { created += 1; return { id: "m1", roomId: "room-1", content: "hi", createdAt: new Date().toISOString(), user: { id: "u1", displayName: "同学", role: "STUDENT" } }; } }
+  } as unknown as PrismaService;
+  const chat = new ChatGateway(auth, prisma);
+  chat.server = { to: () => ({ emit: (event: string) => emitted.push(event) }), sockets: { sockets: new Map() } } as unknown as Server;
+  const client = chatClient();
+  const join = await chat.joinRoom(client, "room-1");
+  assert.deepEqual(join, { ok: true, status: "READY" });
+  assert.deepEqual(await chat.sendMessage(client, { roomId: "room-1", content: "老师好" }), { ok: false, message: "课堂未开播，暂不能发言" });
+  assert.equal(created, 0);
+  roomStatus = "LIVE";
+  assert.deepEqual(await chat.sendMessage(client, { roomId: "room-1", content: "老师好" }), { ok: true });
+  assert.equal(created, 1);
+  assert.deepEqual(emitted, ["new-message"]);
+});

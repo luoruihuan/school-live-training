@@ -50,6 +50,7 @@ test("播放签名与腾讯云 1 秒 Key 有效时间合计为四小时", async 
   const after = Date.now();
   assert.equal(result.flv, "https://live.school.test/live/stream-1.flv");
   assert.equal(result.hls, "https://live.school.test/live/stream-1.m3u8");
+  assert.equal(result.status, "READY");
   assert.ok(new Date(result.expiresAt).getTime() >= before + 240 * 60_000 - 1000);
   assert.ok(new Date(result.expiresAt).getTime() <= after + 240 * 60_000);
 });

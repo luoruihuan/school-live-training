@@ -4,6 +4,7 @@ import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Pos
 import { object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
+import { ChatGateway } from "./chat.gateway.js";
 import { recordingRetentionDays } from "./cloud-config.js";
 import { AuditService } from "./audit.service.js";
 
@@ -32,7 +33,7 @@ function verifyPublishToken(streamName: string, param: string): boolean {
 
 @Controller("webhooks")
 export class CloudWebhookController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway) {}
 
   @Post("srs")
   @HttpCode(200)
@@ -53,10 +54,11 @@ export class CloudWebhookController {
       };
       if (action === "on_publish") patch.lastPublishAt = eventAt;
       else if (room.lastPublishAt) patch.liveSecondsTotal = { increment: Math.max(0, Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 1000)) };
-      await this.prisma.room.updateMany({
+      const updated = await this.prisma.room.updateMany({
         where: { id: room.id, OR: [{ lastEventAt: null }, { lastEventAt: { lt: eventAt } }] },
         data: patch
       });
+      if (updated.count > 0) this.chat.broadcastRoomStatus(room.id, patch.status);
       await this.audit.log({
         action: action === "on_publish" ? "PUBLISH_START" : "PUBLISH_STOP",
         detail: `课堂「${room.title}」${action === "on_publish" ? "开始直播" : `结束直播${room.lastPublishAt ? `（时长约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}`}`
