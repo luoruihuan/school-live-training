@@ -68,9 +68,12 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   web_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' live-training-web-1 2>/dev/null || echo none)"
   if [ "$api_status" = "healthy" ] && [ "$web_status" = "healthy" ]; then
     echo "  api: healthy / web: healthy"
-    docker builder prune -af > /dev/null 2>&1 || true
+    # 保留 2G 热缓存平衡发布速度；用完即删一次性初始化镜像（下次发布自动重建）
+    docker builder prune -af --keep-storage 2g > /dev/null 2>&1 || true
     docker image prune -f > /dev/null 2>&1 || true
-    printf '\n\033[1;32m发布成功\033[0m %s -> %s（已清理构建缓存）\n' "$PREV_COMMIT" "$NEW_COMMIT"
+    "${COMPOSE[@]}" rm -sf initialize > /dev/null 2>&1 || true
+    docker image rm live-training-initialize:latest > /dev/null 2>&1 || true
+    printf '\n\033[1;32m发布成功\033[0m %s -> %s（已清理构建缓存与初始化镜像）\n' "$PREV_COMMIT" "$NEW_COMMIT"
     exit 0
   fi
   sleep 5
