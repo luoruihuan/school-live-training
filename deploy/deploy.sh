@@ -21,6 +21,11 @@ echo "  当前: $PREV_COMMIT"
 
 step "2/7 拉取最新代码"
 if ! git pull --ff-only origin main; then fail "git pull 失败（本地有改动或非快进更新），请人工处理"; fi
+# 脚本自身有更新时，重新加载新版脚本继续执行，避免半新半旧
+if ! git diff --quiet "$PREV_COMMIT" HEAD -- deploy/deploy.sh; then
+  echo "  deploy.sh 已更新，重新加载新版脚本"
+  exec bash "$REPO_ROOT/deploy/deploy.sh"
+fi
 NEW_COMMIT="$(git rev-parse HEAD)"
 echo "  更新: $NEW_COMMIT"
 if [ "$PREV_COMMIT" = "$NEW_COMMIT" ]; then echo "  代码无变化，继续执行构建与迁移检查"; fi
