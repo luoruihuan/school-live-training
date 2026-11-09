@@ -13,7 +13,7 @@ HEALTH_TIMEOUT=180
 step() { printf '\n\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
 fail()  { printf '\033[1;31m失败: %s\033[0m\n' "$*" >&2; exit 1; }
 
-mysql_exec() { local sql="$1"; "${COMPOSE[@]}" exec -T mysql sh -c "MYSQL_PWD=\$MYSQL_PASSWORD mysql -ulive live_training" <<<"$sql"; }
+mysql_exec() { local sql="$1"; "${COMPOSE[@]}" exec -T mysql sh -c "MYSQL_PWD=\$MYSQL_PASSWORD mysql -N -ulive live_training" <<<"$sql"; }
 
 step "1/7 记录当前版本"
 PREV_COMMIT="$(git rev-parse HEAD)"
