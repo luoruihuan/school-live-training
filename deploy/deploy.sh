@@ -51,7 +51,7 @@ done
 shopt -u nullglob
 
 step "5/7 构建镜像"
-"${COMPOSE[@]}" build api web
+"${COMPOSE[@]}" build api web initialize
 
 step "6/7 重启服务"
 "${COMPOSE[@]}" up -d
