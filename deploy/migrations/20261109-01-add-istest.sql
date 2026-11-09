@@ -1,0 +1,8 @@
+-- 20261109-01-add-istest.sql
+-- 测试数据隔离：五张根表增加数据侧标记列（默认 FALSE，历史数据全部归正式侧）
+-- 注意：本迁移已于 2026-11-09 在生产手动执行，_migrations 表已登记，deploy.sh 会自动跳过。
+ALTER TABLE `User` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Store` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Room` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Product` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Coupon` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;

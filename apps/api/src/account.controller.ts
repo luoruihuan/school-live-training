@@ -7,6 +7,7 @@ import { ChatGateway } from "./chat.gateway.js";
 import { withUserLock } from "./user-transaction.js";
 import { AuditService } from "./audit.service.js";
 import { isAdminRole } from "./auth.guard.js";
+import { dataScope, scoped } from "./data-scope.js";
 
 @Controller("users")
 @UseGuards(AuthGuard)
@@ -21,8 +22,8 @@ export class AccountController {
   list(@Req() request: UserRequest) {
     this.admin(request);
     return this.prisma.user.findMany({
-      where: request.currentUser.role === "SUPER_ADMIN" ? {} : { role: { not: "SUPER_ADMIN" } },
-      select: { id: true, email: true, displayName: true, role: true, isActive: true, mustChangePassword: true, pointsBalance: true, createdAt: true },
+      where: { ...(request.currentUser.role === "SUPER_ADMIN" ? {} : { role: { not: "SUPER_ADMIN" } }), ...dataScope(request.currentUser) ?? {} },
+      select: { id: true, email: true, displayName: true, role: true, isTest: true, isActive: true, mustChangePassword: true, pointsBalance: true, createdAt: true },
       orderBy: { createdAt: "desc" }
     });
   }
@@ -35,8 +36,11 @@ export class AccountController {
     if (id === request.currentUser.id) throw new BadRequestException("不能停用当前管理员账号");
     const isActive = input.isActive;
     const result = await this.prisma.$transaction(async (tx) => {
-      const users = await tx.$queryRaw<{ role: string }[]>`SELECT role FROM User WHERE id = ${id} FOR UPDATE`;
+      const users = await tx.$queryRaw<{ role: string; isTest: number }[]>`SELECT role, isTest FROM User WHERE id = ${id} FOR UPDATE`;
       if (!users[0]) throw new NotFoundException("账号不存在");
+      if (request.currentUser.role !== "SUPER_ADMIN" && !!(users[0].isTest ?? 0) !== !!(request.currentUser.isTest ?? false)) {
+        throw new NotFoundException("账号不存在");
+      }
       if (users[0].role === "SUPER_ADMIN" || (users[0].role === "ADMIN" && request.currentUser.role !== "SUPER_ADMIN")) {
         throw new BadRequestException("此入口仅管理教师和学生账号");
       }
@@ -56,8 +60,11 @@ export class AccountController {
     if (password.length < 6) throw new BadRequestException("密码至少 6 位");
     const passwordHash = await hashPassword(password);
     const result = await this.prisma.$transaction(async (tx) => {
-      const users = await tx.$queryRaw<{ role: string }[]>`SELECT role FROM User WHERE id = ${id} FOR UPDATE`;
+      const users = await tx.$queryRaw<{ role: string; isTest: number }[]>`SELECT role, isTest FROM User WHERE id = ${id} FOR UPDATE`;
       if (!users[0]) throw new NotFoundException("账号不存在");
+      if (request.currentUser.role !== "SUPER_ADMIN" && !!(users[0].isTest ?? 0) !== !!(request.currentUser.isTest ?? false)) {
+        throw new NotFoundException("账号不存在");
+      }
       if (users[0].role === "SUPER_ADMIN" || (users[0].role === "ADMIN" && request.currentUser.role !== "SUPER_ADMIN")) {
         throw new BadRequestException("此入口仅管理教师和学生账号");
       }
@@ -89,7 +96,7 @@ export class AccountController {
         }
         return previous;
       }
-      const user = await tx.user.findUniqueOrThrow({ where: { id } });
+      const user = scoped(await tx.user.findUnique({ where: { id } }), request.currentUser, "账号不存在");
       if (isAdminRole(user.role)) throw new BadRequestException("不能调整管理员积分");
       const delta = mode === "ADD" ? points : mode === "DEDUCT" ? -points : points - user.pointsBalance;
       const balanceAfter = user.pointsBalance + delta;
@@ -104,6 +111,7 @@ export class AccountController {
   @Get(":id/points")
   async pointHistory(@Req() request: UserRequest, @Param("id") id: string, @Query() query: Record<string, unknown>) {
     this.admin(request);
+    scoped(await this.prisma.user.findUnique({ where: { id }, select: { id: true, isTest: true } }), request.currentUser, "账号不存在");
     const page = query.page === undefined ? 1 : Number(query.page);
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new BadRequestException("页码不正确");
     const where = { userId: id };

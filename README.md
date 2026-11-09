@@ -65,9 +65,24 @@
 
 使用 `compose.production.yaml` 与 `deploy/.env.example`（复制为 `deploy/.env` 后填写域名与密钥）编排 MySQL、API、网页、SRS、MinIO 容器，配套 `scripts/` 下的数据库备份与证书续期脚本、`deploy/` 下的 Nginx 模板与 SRS 配置。部署后需在云防火墙放行 TCP 1935（OBS 推流）。
 
+### 已有库升级到「测试数据隔离」版本
+
+初始化入口对已有库不做自动迁移（结构不一致会停止部署）。升级前先在 MySQL 执行以下加列语句（均为带默认值的布尔列，秒级完成，不影响现有数据），再拉起新版本：
+
+```sql
+ALTER TABLE `User` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Store` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Room` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Product` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE `Coupon` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
+执行后可 `docker compose exec mysql mysql -ulive -p<pwd> live_training -e "SHOW COLUMNS FROM Room LIKE 'isTest'"` 验证。
+
 ## 安全设计要点
 
 - 草稿课堂由服务端限制学生访问；跨站写请求与聊天连接来源受限。
+- 测试数据隔离：超级管理员创建的店铺/课堂/商品/优惠券/账号自动标记为测试侧，正式侧（管理员/教师/学生）不可见、不可访问（含播放、互动、加购、领券、账号管理）；测试侧账号同样看不到正式数据；两侧创建与绑定不允许交叉。
 - 积分调整需管理员密码二次核验并记录流水；订单与流水用「用户 + 请求标识」唯一约束防重复提交，同一标识不能换内容重放。
 - 直播/断流/录制回调验签，按事件时间防止旧断流覆盖新开播；推流与播放地址均为限时签名。
 - 密码 scrypt 哈希存储；登录限频；停用/重置即时失效全部会话并断开聊天连接。

@@ -11,6 +11,7 @@ import { StorageService } from "./storage.service.js";
 import type { Product } from "./generated/prisma/client.js";
 import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
+import { dataScope, isTestCreator, sameSideCreate, scoped, assertSameSide } from "./data-scope.js";
 import { publishToken } from "./cloud-webhook.controller.js";
 
 function liveDomain(): string {
@@ -41,7 +42,7 @@ export class BusinessController {
     if (role !== "TEACHER" && role !== "STUDENT") throw new BadRequestException("角色不正确");
     if (await this.prisma.user.findUnique({ where: { email } })) throw new BadRequestException("该账号已存在");
     const created = await this.prisma.user.create({
-      data: { email, displayName: optionalString(input, "displayName", 80) || email, passwordHash: await hashPassword(password), role, mustChangePassword: true },
+      data: { email, displayName: optionalString(input, "displayName", 80) || email, passwordHash: await hashPassword(password), role, isTest: isTestCreator(request.currentUser), mustChangePassword: true },
       select: { id: true, email: true, displayName: true, role: true, createdAt: true }
     });
     await this.audit.log({ action: "USER_CREATED", userId: created.id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 创建了${role === "TEACHER" ? "教师" : "学生"}账号 ${email}` });
@@ -51,8 +52,8 @@ export class BusinessController {
   @Get("product-images/:id")
   async productImage(@Req() request: UserRequest, @Param("id") id: string, @Res() response: Response) {
     void request;
-    const product = await this.prisma.product.findUnique({ where: { id } });
-    if (!product?.imageKey) throw new NotFoundException("商品图片不存在");
+    const product = scoped(await this.prisma.product.findUnique({ where: { id } }), request.currentUser, "商品图片不存在");
+    if (!product.imageKey) throw new NotFoundException("商品图片不存在");
     const { stream, contentType } = await this.storage.getImageStream(product.imageKey);
     response.status(200);
     response.setHeader("Content-Type", contentType);
@@ -61,8 +62,8 @@ export class BusinessController {
   }
 
   @Get("stores")
-  stores() {
-    return this.prisma.store.findMany({ orderBy: { createdAt: "desc" } });
+  stores(@Req() request: UserRequest) {
+    return this.prisma.store.findMany({ where: dataScope(request.currentUser), orderBy: { createdAt: "desc" } });
   }
 
   @Post("stores")
@@ -70,13 +71,13 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const input = object(body);
     return this.prisma.store.create({
-      data: { name: stringField(input, "name", 80), description: optionalString(input, "description") ?? "" }
+      data: { name: stringField(input, "name", 80), isTest: isTestCreator(request.currentUser), description: optionalString(input, "description") ?? "" }
     });
   }
 
   @Get("rooms")
   async rooms(@Req() request: UserRequest) {
-    const rooms = await this.prisma.room.findMany({ where: request.currentUser.role === "STUDENT" ? { status: { not: "DRAFT" } } : {}, include: {
+    const rooms = await this.prisma.room.findMany({ where: { ...(request.currentUser.role === "STUDENT" ? { status: { not: "DRAFT" } } : {}), ...dataScope(request.currentUser) ?? {} }, include: {
       store: { select: { id: true, name: true } },
       _count: { select: { products: { where: { product: { isActive: true } } }, coupons: { where: { expiresAt: { gt: new Date() } } }, recordings: { where: { expiresAt: { gt: new Date() }, objectKey: { endsWith: ".mp4" } } } } }
     }, orderBy: { createdAt: "desc" } });
@@ -87,7 +88,7 @@ export class BusinessController {
   async updateStore(@Req() request: UserRequest, @Param("id") id: string, @Body() body: unknown) {
     requireStaff(request.currentUser);
     const input = object(body);
-    if (!(await this.prisma.store.findUnique({ where: { id } }))) throw new NotFoundException("店铺不存在");
+    scoped(await this.prisma.store.findUnique({ where: { id } }), request.currentUser, "店铺不存在");
     return this.prisma.store.update({ where: { id }, data: {
       name: stringField(input, "name", 80), description: optionalString(input, "description") ?? ""
     } });
@@ -96,7 +97,7 @@ export class BusinessController {
   @Get("rooms/:id")
   async room(@Param("id") id: string, @Req() request: UserRequest) {
     const room = await this.prisma.room.findUnique({ where: { id }, include: { store: true } });
-    return visibleRoom(room, request.currentUser.role);
+    return visibleRoom(room, request.currentUser);
   }
 
   @Post("rooms")
@@ -104,9 +105,9 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const input = object(body);
     const storeId = stringField(input, "storeId", 100);
-    if (!(await this.prisma.store.findUnique({ where: { id: storeId } }))) throw new NotFoundException("店铺不存在");
+    sameSideCreate(scoped(await this.prisma.store.findUnique({ where: { id: storeId } }), request.currentUser, "店铺不存在"), request.currentUser);
     return this.prisma.room.create({
-      data: { storeId, title: stringField(input, "title", 100), streamName: randomBytes(12).toString("hex") }
+      data: { storeId, title: stringField(input, "title", 100), isTest: isTestCreator(request.currentUser), streamName: randomBytes(12).toString("hex") }
     });
   }
 
@@ -121,8 +122,7 @@ export class BusinessController {
       throw new BadRequestException("直播中状态由云推流回调更新，不能手动设置");
     }
     if (status !== undefined) {
-      const room = await this.prisma.room.findUnique({ where: { id }, select: { status: true } });
-      if (!room) throw new NotFoundException("直播间不存在");
+      const room = scoped(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser, "直播间不存在");
       if (room.status === "LIVE") throw new BadRequestException("直播中请先停止 OBS，等待云回调更新状态");
     }
     return this.prisma.room.update({ where: { id }, data: {
@@ -149,6 +149,7 @@ export class BusinessController {
     const room = await this.room(id, request);
     const domain = liveDomain();
     return {
+      status: room.status,
       flv: `https://${domain}/live/${room.streamName}.flv`,
       hls: `https://${domain}/live/${room.streamName}.m3u8`,
       expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
@@ -159,7 +160,7 @@ export class BusinessController {
   async products(@Req() request: UserRequest) {
     const staff = isAdminRole(request.currentUser.role) || request.currentUser.role === "TEACHER";
     const products = await this.prisma.product.findMany({
-      where: staff ? {} : { isActive: true, rooms: { some: { room: { status: { not: "DRAFT" } } } } }, orderBy: { createdAt: "desc" }
+      where: { ...(staff ? {} : { isActive: true, rooms: { some: { room: { status: { not: "DRAFT" } } } } }), ...dataScope(request.currentUser) ?? {} }, orderBy: { createdAt: "desc" }
     });
     return Promise.all(products.map((product) => this.withImage(product)));
   }
@@ -169,7 +170,7 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const input = object(body);
     const storeId = stringField(input, "storeId", 100);
-    if (!(await this.prisma.store.findUnique({ where: { id: storeId } }))) throw new NotFoundException("店铺不存在");
+    sameSideCreate(scoped(await this.prisma.store.findUnique({ where: { id: storeId } }), request.currentUser, "店铺不存在"), request.currentUser);
     const imageUrl = optionalString(input, "imageUrl", 500);
     const imageKey = optionalString(input, "imageKey", 200);
     if (imageUrl && !imageUrl.startsWith("https://")) throw new BadRequestException("图片地址必须是 HTTPS");
@@ -179,6 +180,7 @@ export class BusinessController {
     return this.prisma.product.create({ data: {
       storeId,
       name: stringField(input, "name", 100),
+      isTest: isTestCreator(request.currentUser),
       description: optionalString(input, "description") ?? "",
       pointsPrice: integerField(input, "pointsPrice", 1, 1_000_000),
       pickupPoint: stringField(input, "pickupPoint", 200),
@@ -189,7 +191,7 @@ export class BusinessController {
   @Patch("products/:id")
   async updateProduct(@Req() request: UserRequest, @Param("id") id: string, @Body() body: unknown) {
     requireStaff(request.currentUser);
-    if (!(await this.prisma.product.findUnique({ where: { id } }))) throw new NotFoundException("商品不存在");
+    scoped(await this.prisma.product.findUnique({ where: { id } }), request.currentUser, "商品不存在");
     const input = object(body);
     const name = optionalString(input, "name", 100);
     const description = optionalString(input, "description", 1000);
@@ -226,6 +228,9 @@ export class BusinessController {
       this.prisma.product.findUnique({ where: { id: productId } })
     ]);
     if (!room || !product) throw new NotFoundException("直播间或商品不存在");
+    scoped(room, request.currentUser, "直播间或商品不存在");
+    scoped(product, request.currentUser, "直播间或商品不存在");
+    assertSameSide(room, product);
     if (room.storeId !== product.storeId) throw new BadRequestException("商品不属于直播间店铺");
     const position = input.position === undefined ? 0 : integerField(input, "position", 0, 9999);
     return this.prisma.roomProduct.upsert({
@@ -235,8 +240,9 @@ export class BusinessController {
   }
 
   @Delete("rooms/:id/products/:productId")
-  unbindProduct(@Req() request: UserRequest, @Param("id") id: string, @Param("productId") productId: string) {
+  async unbindProduct(@Req() request: UserRequest, @Param("id") id: string, @Param("productId") productId: string) {
     requireStaff(request.currentUser);
+    visibleRoom(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser);
     return this.prisma.roomProduct.deleteMany({ where: { roomId: id, productId } });
   }
 
@@ -256,6 +262,7 @@ export class BusinessController {
     return withUserLock(this.prisma, userId, async (tx) => {
       const product = await tx.product.findUnique({ where: { id: productId } });
       if (!product?.isActive) throw new NotFoundException("商品不存在或已下架");
+      scoped(product, request.currentUser, "商品不存在或已下架");
       if (!(await tx.roomProduct.findFirst({ where: { productId, ...(request.currentUser.role === "STUDENT" ? { room: { status: { not: "DRAFT" } } } : {}) }, select: { roomId: true } }))) {
         throw new BadRequestException("商品尚未绑定直播间");
       }

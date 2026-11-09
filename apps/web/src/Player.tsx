@@ -4,12 +4,13 @@ import type Hls from "hls.js";
 import type mpegts from "mpegts.js";
 import { api } from "./api";
 
-type Playback = { hls: string; flv: string; expiresAt: string };
+type Playback = { status: "DRAFT" | "READY" | "LIVE" | "ENDED"; hls: string; flv: string; expiresAt: string };
 
 export function Player({ roomId, previewMock = false }: { roomId: string; previewMock?: boolean }) {
   const mock = import.meta.env.DEV && (previewMock || new URLSearchParams(location.search).get("mock") === "1");
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState("");
+  const [idleStatus, setIdleStatus] = useState<Playback["status"] | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -20,9 +21,12 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
     let flvPlayer: ReturnType<typeof mpegts.createPlayer> | undefined;
     let hlsStarted = false;
     setError("");
+    setIdleStatus(null);
     if (mock) return;
-    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv }) => {
+    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv, status }) => {
       if (cancelled) return;
+      // 拉流保持建立（SRS 会等流出现），未开播只叠加提示；开播后数据到达、onPlaying 自动撤掉覆盖层。
+      if (status !== "LIVE") setIdleStatus(status);
       const startHls = async () => {
         if (cancelled || hlsStarted) return;
         hlsStarted = true;
@@ -75,7 +79,8 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
   }, [roomId, attempt, mock]);
 
   return <div className="player">
-    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => setError("")} />
+    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} />
+    {idleStatus && !mock && !error && <div className="player__idle" aria-live="polite"><b>{idleStatus === "ENDED" ? "直播已结束" : "课堂未开播"}</b><span>{idleStatus === "ENDED" ? "可稍后在课程回放中查看录像" : "开播后画面会自动出现，无需刷新"}</span></div>}
     {mock && <Alert type="info" title="本地视频演示 · 不代表真实直播已接通" showIcon className="spaced-top" />}
     {error && <Alert type="warning" title={error} showIcon action={<Button size="small" onClick={() => setAttempt((value) => value + 1)}>重新连接</Button>} />}
     <span className="player__hint">{mock ? "演示视频会循环播放，点击播放器可取消静音。" : "点击播放器可取消静音。未开播时画面可能暂时为空。"}</span>

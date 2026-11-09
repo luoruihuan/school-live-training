@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, App, Button, Card, Form, Input, InputNumber, Modal, Radio, Space, Table, Tag } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { api, pointText, post, type ManagedUser } from "./api";
+import { TestTag } from "./ui";
 
 type PointMode = "ADD" | "DEDUCT" | "SET";
 type PointEntry = { id: string; delta: number; balanceAfter: number; reason: string; createdAt: string; actor: { displayName: string } | null };
@@ -71,7 +72,7 @@ export function PointsManagement() {
     {error && <Alert type="error" title={error} showIcon className="spaced" />}
     <div className="admin-toolbar"><Input.Search aria-label="搜索积分账号" placeholder="搜索姓名或邮箱" allowClear onChange={(event) => setSearch(event.target.value)} /><Button icon={<ReloadOutlined />} onClick={() => setRevision((value) => value + 1)}>刷新</Button></div>
     <Card styles={{ body: { padding: 0 } }}><Table<ManagedUser> rowKey="id" dataSource={users.filter((user) => `${user.displayName}${user.email}`.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 650 }} columns={[
-      { title: "姓名", dataIndex: "displayName" }, { title: "账号邮箱", dataIndex: "email" },
+      { title: "姓名", render: (_, user) => <><TestTag show={user.isTest} />{user.displayName}</> }, { title: "账号邮箱", dataIndex: "email" },
       { title: "角色", render: (_, user) => user.role === "TEACHER" ? "教师" : "学生" },
       { title: "当前积分", render: (_, user) => <strong>{pointText(user.pointsBalance)}</strong> },
       { title: "操作", render: (_, user) => <Space><Button type="link" onClick={() => { requestKey.current = crypto.randomUUID(); setMode("ADD"); setSelected(user); }}>调整积分</Button><Button type="link" onClick={() => void openHistory(user)}>查看流水</Button></Space> }

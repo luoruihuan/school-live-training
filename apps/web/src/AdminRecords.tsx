@@ -3,6 +3,7 @@ import { Alert, Button, Card, Input, Popconfirm, Space, Table, Tag, Typography }
 import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { api, pointText, patch, type ManagedUser, type Order } from "./api";
 import { EntityEditor } from "./EntityEditor";
+import { TestTag } from "./ui";
 import type { Platform } from "./usePlatform";
 
 export function Accounts({ data }: { data: Platform }) {
@@ -20,7 +21,7 @@ export function Accounts({ data }: { data: Platform }) {
     {error && <Alert type="error" title={error} className="spaced" action={<Button size="small" onClick={() => setRevision((n) => n + 1)}>重试</Button>} />}
     <div className="admin-toolbar"><Input.Search aria-label="搜索账号" placeholder="搜索姓名或邮箱" allowClear onChange={(e) => setSearch(e.target.value)} /><Space><Button icon={<ReloadOutlined />} aria-label="刷新账号" onClick={() => setRevision((n) => n + 1)} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor("create")}>新建账号</Button></Space></div>
     <Card styles={{ body: { padding: 0 } }}><Table<ManagedUser> rowKey="id" scroll={{ x: 800 }} dataSource={users.filter((u) => `${u.displayName}${u.email}`.includes(search))} pagination={{ pageSize: 10 }} columns={[
-      { title: "姓名", dataIndex: "displayName" }, { title: "账号邮箱", dataIndex: "email" }, { title: "角色", render: (_, u) => <Tag color={u.role === "SUPER_ADMIN" ? "magenta" : u.role === "ADMIN" ? "purple" : u.role === "TEACHER" ? "blue" : "default"}>{u.role === "SUPER_ADMIN" ? "超级管理员" : u.role === "ADMIN" ? "管理员" : u.role === "TEACHER" ? "教师" : "学生"}</Tag> },
+      { title: "姓名", render: (_, u) => <><TestTag show={u.isTest} />{u.displayName}</> }, { title: "账号邮箱", dataIndex: "email" }, { title: "角色", render: (_, u) => <Tag color={u.role === "SUPER_ADMIN" ? "magenta" : u.role === "ADMIN" ? "purple" : u.role === "TEACHER" ? "blue" : "default"}>{u.role === "SUPER_ADMIN" ? "超级管理员" : u.role === "ADMIN" ? "管理员" : u.role === "TEACHER" ? "教师" : "学生"}</Tag> },
       { title: "状态", render: (_, u) => <Tag color={u.isActive ? "green" : "red"}>{u.isActive ? "正常" : "已停用"}</Tag> },
       { title: "操作", render: (_, u) => u.role === "SUPER_ADMIN" || u.role === "ADMIN" ? <Typography.Text type="secondary">{u.role === "SUPER_ADMIN" ? "超级管理员" : "管理员"}账号</Typography.Text> : <Space><Button type="link" onClick={() => setEditor(u)}>重置密码</Button><Popconfirm title={u.isActive ? "停用后此账号将立即无法使用，确认停用？" : "确认重新启用此账号？"} onConfirm={async () => { if (await data.run(() => patch(`/users/${u.id}`, { isActive: !u.isActive }), "账号状态已更新")) setRevision((n) => n + 1); }}><Button type="link" danger={u.isActive} disabled={data.busy}>{u.isActive ? "停用" : "启用"}</Button></Popconfirm></Space> }
     ]} /></Card>

@@ -7,6 +7,7 @@ import { PrismaService } from "./prisma.service.js";
 import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
 import { AuditService } from "./audit.service.js";
+import { dataScope, isTestCreator, sameSideCreate, scoped } from "./data-scope.js";
 
 @Controller()
 @UseGuards(AuthGuard)
@@ -26,7 +27,7 @@ export class CommerceController {
   @Get("coupons")
   coupons(@Req() request: UserRequest) {
     return this.prisma.coupon.findMany({
-      where: { expiresAt: { gt: new Date() }, ...(request.currentUser.role === "STUDENT" ? { room: { status: { not: "DRAFT" } } } : {}) },
+      where: { expiresAt: { gt: new Date() }, ...(request.currentUser.role === "STUDENT" ? { room: { status: { not: "DRAFT" } } } : {}), ...dataScope(request.currentUser) ?? {} },
       include: { store: { select: { name: true } }, room: { select: { title: true } } },
       orderBy: { createdAt: "desc" }
     });
@@ -45,10 +46,10 @@ export class CommerceController {
     requireStaff(request.currentUser);
     const input = object(body);
     const storeId = stringField(input, "storeId", 100);
-    if (!(await this.prisma.store.findUnique({ where: { id: storeId } }))) throw new NotFoundException("店铺不存在");
+    sameSideCreate(scoped(await this.prisma.store.findUnique({ where: { id: storeId } }), request.currentUser, "店铺不存在"), request.currentUser);
     const roomId = stringField(input, "roomId", 100);
-    const room = await this.prisma.room.findUnique({ where: { id: roomId } });
-    if (!room || room.storeId !== storeId) throw new BadRequestException("直播间不属于所选店铺");
+    const room = scoped(await this.prisma.room.findUnique({ where: { id: roomId } }), request.currentUser, "直播间不存在");
+    if (room.storeId !== storeId) throw new BadRequestException("直播间不属于所选店铺");
     const expiresAt = new Date(stringField(input, "expiresAt", 40));
     if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
       throw new BadRequestException("优惠券有效期不正确");
@@ -57,6 +58,7 @@ export class CommerceController {
       storeId,
       roomId,
       name: stringField(input, "name", 80),
+      isTest: isTestCreator(request.currentUser),
       pointsDiscount: integerField(input, "pointsDiscount", 1, 1_000_000),
       expiresAt
     } });
@@ -64,9 +66,9 @@ export class CommerceController {
 
   @Post("coupons/:id/claim")
   async claimCoupon(@Req() request: UserRequest, @Param("id") id: string) {
-    const coupon = await this.prisma.coupon.findUnique({ where: { id }, include: { room: true } });
-    if (!coupon || coupon.expiresAt.getTime() <= Date.now()) throw new NotFoundException("优惠券不存在或已过期");
-    visibleRoom(coupon.room, request.currentUser.role);
+    const coupon = scoped(await this.prisma.coupon.findUnique({ where: { id }, include: { room: true } }), request.currentUser, "优惠券不存在或已过期");
+    if (coupon.expiresAt.getTime() <= Date.now()) throw new NotFoundException("优惠券不存在或已过期");
+    visibleRoom(coupon.room, request.currentUser);
     return this.prisma.userCoupon.upsert({
       where: { userId_couponId: { userId: request.currentUser.id, couponId: id } },
       update: {},
@@ -77,7 +79,7 @@ export class CommerceController {
   @Patch("coupons/:id/expire")
   async expireCoupon(@Req() request: UserRequest, @Param("id") id: string) {
     requireStaff(request.currentUser);
-    const result = await this.prisma.coupon.updateMany({ where: { id, expiresAt: { gt: new Date() } }, data: { expiresAt: new Date() } });
+    const result = await this.prisma.coupon.updateMany({ where: { id, expiresAt: { gt: new Date() }, ...dataScope(request.currentUser) ?? {} }, data: { expiresAt: new Date() } });
     if (!result.count) throw new NotFoundException("优惠券不存在或已停用");
     return { expired: true };
   }
@@ -85,7 +87,8 @@ export class CommerceController {
   @Get("staff/overview")
   async staffOverview(@Req() request: UserRequest) {
     requireStaff(request.currentUser);
-    return { pendingOrders: await this.prisma.order.count({ where: { status: { in: ["PENDING_PICKUP", "PENDING_DELIVERY"] } } }) };
+    const scope = dataScope(request.currentUser);
+    return { pendingOrders: await this.prisma.order.count({ where: { status: { in: ["PENDING_PICKUP", "PENDING_DELIVERY"] }, ...(scope ? { user: scope } : {}) } }) };
   }
 
   @Get("orders")
@@ -132,7 +135,7 @@ export class CommerceController {
       if (cart.some((item) => !item.product.isActive || !item.product.rooms.length)) throw new BadRequestException("部分商品已下架或移出直播间，请先移除");
       if (request.currentUser.role === "STUDENT") {
         const roomIds = [...new Set(cart.flatMap((item) => item.product.rooms.map((binding) => binding.roomId)))];
-        const visible = await tx.room.findMany({ where: { id: { in: roomIds }, status: { not: "DRAFT" } }, select: { id: true } });
+        const visible = await tx.room.findMany({ where: { id: { in: roomIds }, status: { not: "DRAFT" }, isTest: request.currentUser.isTest ?? false }, select: { id: true } });
         const visibleIds = new Set(visible.map((room) => room.id));
         if (cart.some((item) => !item.product.rooms.some((binding) => visibleIds.has(binding.roomId)))) {
           throw new BadRequestException("部分商品所在课堂尚未开放，请先移除");
@@ -150,7 +153,7 @@ export class CommerceController {
         if (!claimed || claimed.usedAt || claimed.coupon.expiresAt.getTime() <= Date.now()) {
           throw new BadRequestException("优惠券不可使用");
         }
-        visibleRoom(claimed.coupon.room, request.currentUser.role);
+        visibleRoom(claimed.coupon.room, request.currentUser);
         const eligible = cart.filter((item) => item.product.storeId === claimed.coupon.storeId &&
           item.product.rooms.some((binding) => binding.roomId === claimed.coupon.roomId))
           .reduce((sum, item) => sum + item.product.pointsPrice * item.quantity, 0);
@@ -189,8 +192,13 @@ export class CommerceController {
   @Patch("staff/orders/:id/complete")
   async completeOrder(@Req() request: UserRequest, @Param("id") id: string) {
     requireStaff(request.currentUser);
-    const result = await this.prisma.order.updateMany({ where: { id, status: { in: ["PENDING_PICKUP", "PENDING_DELIVERY"] } }, data: { status: "COMPLETED" } });
-    if (!result.count) throw new BadRequestException("订单不存在或已完成");
+    // updateMany 不支持关系过滤，先取订单做同侧校验再更新。
+    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, status: true, user: { select: { isTest: true } } } });
+    if (!order || !["PENDING_PICKUP", "PENDING_DELIVERY"].includes(order.status) ||
+        (request.currentUser.role !== "SUPER_ADMIN" && (order.user.isTest ?? false) !== (request.currentUser.isTest ?? false))) {
+      throw new BadRequestException("订单不存在或已完成");
+    }
+    await this.prisma.order.update({ where: { id }, data: { status: "COMPLETED" } });
     await this.audit.log({ action: "ORDER_COMPLETED", actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 标记订单 ${id.slice(-8).toUpperCase()} 已交付` });
     return { ok: true };
   }
@@ -201,10 +209,11 @@ export class CommerceController {
     const page = query.page === undefined ? 1 : Number(query.page);
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new BadRequestException("页码不正确");
     const q = typeof query.q === "string" ? query.q.trim().slice(0, 100) : "";
-    const where = q ? { OR: [
+    const scope = dataScope(request.currentUser);
+    const where = { ...(scope ? { user: scope } : {}), ...(q ? { OR: [
       { id: { contains: q } }, { user: { email: { contains: q } } }, { user: { displayName: { contains: q } } },
       { items: { some: { name: { contains: q } } } }
-    ] } : {};
+    ] } : {}) };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({ where, include: { items: true, coupon: { select: { name: true } }, user: { select: { id: true, email: true, displayName: true } } }, orderBy: { createdAt: "desc" }, skip: (page - 1) * 20, take: 20 }),
       this.prisma.order.count({ where })

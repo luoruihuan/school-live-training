@@ -1,7 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
 
 export function allowedOrigin(origin: unknown): boolean {
-  return typeof origin === "string" && origin === (process.env.APP_ORIGIN || "http://127.0.0.1:5173");
+  if (typeof origin !== "string") return false;
+  const configured = (process.env.APP_ORIGIN || "http://127.0.0.1:5173")
+    .split(",").map((item) => item.trim()).filter(Boolean);
+  return configured.includes(origin);
 }
 
 export function csrfProtection(request: Request, response: Response, next: NextFunction): void {

@@ -4,6 +4,7 @@ import { ChatGateway } from "./chat.gateway.js";
 import { object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { visibleRoom } from "./room-access.js";
+import { scoped } from "./data-scope.js";
 
 @Controller()
 @UseGuards(AuthGuard)
@@ -12,7 +13,7 @@ export class ChatController {
 
   @Get("rooms/:id/messages")
   async messages(@Param("id") id: string, @Req() request: UserRequest) {
-    visibleRoom(await this.prisma.room.findUnique({ where: { id } }), request.currentUser.role);
+    visibleRoom(await this.prisma.room.findUnique({ where: { id } }), request.currentUser);
     const messages = await this.prisma.chatMessage.findMany({
       where: { roomId: id, isHidden: false }, take: 50, orderBy: { createdAt: "desc" },
       select: { id: true, roomId: true, content: true, createdAt: true, user: { select: { id: true, displayName: true, role: true } } }
@@ -23,6 +24,7 @@ export class ChatController {
   @Delete("rooms/:id/messages/:messageId")
   async hideMessage(@Req() request: UserRequest, @Param("id") roomId: string, @Param("messageId") messageId: string) {
     requireStaff(request.currentUser);
+    visibleRoom(await this.prisma.room.findUnique({ where: { id: roomId } }), request.currentUser);
     const result = await this.prisma.chatMessage.updateMany({
       where: { id: messageId, roomId }, data: { isHidden: true }
     });
@@ -43,6 +45,8 @@ export class ChatController {
     if (!room || !user) {
       throw new NotFoundException("直播间或账号不存在");
     }
+    visibleRoom(room, request.currentUser);
+    scoped(user, request.currentUser, "直播间或账号不存在");
     if (user.role !== "STUDENT") throw new BadRequestException("仅学生账号可被禁言");
     const until = new Date(Date.now() + 60 * 60 * 1000);
     return this.prisma.roomMute.upsert({

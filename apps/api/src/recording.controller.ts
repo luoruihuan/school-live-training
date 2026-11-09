@@ -15,7 +15,7 @@ export class RecordingController {
 
   @Get("rooms/:id/recordings")
   async recordings(@Param("id") id: string, @Req() request: UserRequest) {
-    visibleRoom(await this.prisma.room.findUnique({ where: { id } }), request.currentUser.role);
+    visibleRoom(await this.prisma.room.findUnique({ where: { id } }), request.currentUser);
     return this.prisma.recording.findMany({
       where: { roomId: id, expiresAt: { gt: new Date() }, objectKey: { endsWith: ".mp4" } },
       select: { id: true, durationSecs: true, createdAt: true, expiresAt: true },
@@ -69,7 +69,7 @@ export class RecordingController {
   private async visible(id: string, request: UserRequest) {
     const recording = await this.prisma.recording.findUnique({ where: { id } });
     if (!recording || recording.expiresAt.getTime() <= Date.now()) throw new NotFoundException("回放不存在或已过期");
-    visibleRoom(await this.prisma.room.findUnique({ where: { id: recording.roomId } }), request.currentUser.role);
+    visibleRoom(await this.prisma.room.findUnique({ where: { id: recording.roomId } }), request.currentUser);
     return recording;
   }
 }

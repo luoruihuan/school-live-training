@@ -6,6 +6,9 @@ export const roomStatus = { DRAFT: "准备中", READY: "待开播", LIVE: "直�
 export function RoomStatus({ status }: { status: Room["status"] }) {
   return <Tag color={status === "LIVE" ? "green" : status === "READY" ? "blue" : "default"}>{roomStatus[status]}</Tag>;
 }
+export function TestTag({ show }: { show?: boolean }) {
+  return show ? <Tag color="volcano">测试</Tag> : null;
+}
 export function ProductImage({ product }: { product: Product }) {
   return <div className="product-image">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} loading="lazy" /> : <ShoppingOutlined />}</div>;
 }

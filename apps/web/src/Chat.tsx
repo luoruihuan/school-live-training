@@ -17,24 +17,31 @@ export function Chat({ roomId, canModerate }: { roomId: string; canModerate: boo
   const [error, setError] = useState("");
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [roomStatus, setRoomStatus] = useState<"DRAFT" | "READY" | "LIVE" | "ENDED">("READY");
   const [sending, setSending] = useState(false);
+  const live = roomStatus === "LIVE";
 
   useEffect(() => {
     let active = true;
     setMessages([]);
     setError("");
     setConnected(false);
+    setRoomStatus("READY");
     api<Message[]>(`/rooms/${roomId}/messages`).then((items) => {
       if (active) setMessages((current) => [...new Map([...items, ...current].map((m) => [m.id, m])).values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-50));
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "读取互动消息失败");
     });
     const connection = io({ transports: ["websocket"] });
-    connection.on("connect", () => connection.timeout(8000).emit("join-room", roomId, (timeout: Error | null, response?: { ok: boolean; message?: string }) => {
+    connection.on("connect", () => connection.timeout(8000).emit("join-room", roomId, (timeout: Error | null, response?: { ok: boolean; status?: "DRAFT" | "READY" | "LIVE" | "ENDED"; message?: string }) => {
       if (!active) return;
       setConnected(!timeout && !!response?.ok);
+      if (response?.ok && response.status) setRoomStatus(response.status);
       setError(timeout ? "课堂连接超时，请重新进入课堂" : response?.ok ? "" : response?.message ?? "进入课堂失败");
     }));
+    connection.on("room-status", (event: { roomId: string; status: "LIVE" | "ENDED" }) => {
+      if (active && event.roomId === roomId) setRoomStatus(event.status);
+    });
     connection.on("disconnect", (reason) => { if (active) { setConnected(false); setError(reason === "io server disconnect" ? "登录会话已失效，请重新登录；如账号已停用，请联系管理员。" : "互动连接已断开，正在尝试恢复。"); } });
     connection.on("new-message", (message: Message) => {
       if (active && message.roomId === roomId) {
@@ -50,7 +57,7 @@ export function Chat({ roomId, canModerate }: { roomId: string; canModerate: boo
   }, [roomId]);
 
   function send(): void {
-    if (!socket || !draft.trim() || !connected || sending) return;
+    if (!socket || !draft.trim() || !connected || !live || sending) return;
     setSending(true);
     socket.timeout(8000).emit("send-message", { roomId, content: draft.trim() }, (timeout: Error | null, response?: { ok: boolean; message?: string }) => {
       setSending(false);
@@ -74,12 +81,12 @@ export function Chat({ roomId, canModerate }: { roomId: string; canModerate: boo
     }
   }
 
-  return <section className="chat"><div className="section-heading"><h3>课堂互动</h3><Tag color={connected ? "green" : "default"}>{connected ? "已连接" : "连接中"}</Tag></div>
+  return <section className="chat"><div className="section-heading"><h3>课堂互动</h3><Tag color={connected && live ? "green" : "default"}>{!connected ? "连接中" : live ? "已连接" : roomStatus === "ENDED" ? "已结束" : "未开播"}</Tag></div>
     <div className="chat__messages" aria-live="polite">
       {messages.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有消息，来发起第一条互动吧" />}
       {messages.map((message) => <div className="chat__message" key={message.id}><div className="chat__author"><strong>{message.user.displayName}</strong><small>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small></div><span>{message.content}</span>{canModerate && <span className="chat__actions"><Popconfirm title="隐藏此条消息？" onConfirm={() => moderate(message, "hide")}><Button size="small" type="text" danger>删除</Button></Popconfirm>{message.user.role === "STUDENT" && <Popconfirm title="将该学生在本课堂禁言 1 小时？" onConfirm={() => moderate(message, "mute")}><Button size="small" type="text">禁言</Button></Popconfirm>}</span>}</div>)}
     </div>
-    <Form onFinish={send} className="chat__form"><Input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} placeholder="分享你的想法…" aria-label="互动内容" /><Button type="primary" htmlType="submit" disabled={!draft.trim() || !connected} loading={sending}>发送</Button></Form>
+    <Form onFinish={send} className="chat__form"><Input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} placeholder={connected && !live ? (roomStatus === "ENDED" ? "直播已结束" : "课堂未开播，开播后可参与互动") : "分享你的想法…"} aria-label="互动内容" /><Button type="primary" htmlType="submit" disabled={!draft.trim() || !connected || !live} loading={sending}>发送</Button></Form>
     {error && <Alert type="warning" title={error} showIcon className="spaced-top" />}
   </section>;
 }
