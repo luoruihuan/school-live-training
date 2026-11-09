@@ -13,7 +13,7 @@ HEALTH_TIMEOUT=180
 step() { printf '\n\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
 fail()  { printf '\033[1;31m失败: %s\033[0m\n' "$*" >&2; exit 1; }
 
-mysql_exec() { "${COMPOSE[@]}" exec -T mysql sh -c "MYSQL_PWD=\$MYSQL_PASSWORD mysql -ulive live_training"; }
+mysql_exec() { local sql="$1"; "${COMPOSE[@]}" exec -T mysql sh -c "MYSQL_PWD=\$MYSQL_PASSWORD mysql -ulive live_training" <<<"$sql"; }
 
 step "1/7 记录当前版本"
 PREV_COMMIT="$(git rev-parse HEAD)"
@@ -34,23 +34,18 @@ echo "  备份: $BACKUP ($(du -h "$BACKUP" | cut -f1))"
 ls -t backups/pre-deploy-*.sql.gz 2>/dev/null | tail -n +"$((KEEP_BACKUPS + 1))" | xargs -r rm --
 
 step "4/7 应用数据库迁移"
-mysql_exec <<'SQL'
-CREATE TABLE IF NOT EXISTS `_migrations` (
-  `name` VARCHAR(191) PRIMARY KEY,
-  `applied_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-SQL
+mysql_exec "CREATE TABLE IF NOT EXISTS \`_migrations\` (\`name\` VARCHAR(191) PRIMARY KEY, \`applied_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);"
 shopt -s nullglob
 for f in deploy/migrations/*.sql; do
   case "$f" in *.down.sql) continue;; esac
   name="$(basename "$f")"
-  applied="$(mysql_exec -N -e "SELECT COUNT(*) FROM _migrations WHERE name='$name'")"
+  applied="$(mysql_exec "SELECT COUNT(*) FROM _migrations WHERE name='$name'")"
   if [ "${applied// /}" = "1" ]; then
     echo "  跳过已应用: $name"
   else
     echo "  应用迁移: $name"
-    mysql_exec < "$f"
-    mysql_exec -e "INSERT INTO _migrations(name) VALUES ('$name')"
+    mysql_exec "$(cat "$f")"
+    mysql_exec "INSERT INTO _migrations(name) VALUES ('$name')"
   fi
 done
 shopt -u nullglob
