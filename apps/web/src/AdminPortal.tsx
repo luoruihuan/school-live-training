@@ -28,7 +28,11 @@ export default function AdminPortal({ user, logout }: { user: User; logout: () =
   const [mobileMenu, setMobileMenu] = useState(false);
   const data = usePlatform();
   const page = pages.find((p) => p.key === tab)!;
-  const allowed = pages.filter((p) => user.role === "SUPER_ADMIN" || !["accounts", "points", "ops"].includes(p.key));
+  const allowed = pages.filter((p) => {
+    if (p.key === "ops") return user.role === "SUPER_ADMIN";
+    if (p.key === "accounts" || p.key === "points") return ["ADMIN", "SUPER_ADMIN"].includes(user.role);
+    return true;
+  });
   const group = (label: string, keys: Tab[]) => ({ type: "group" as const, label, children: allowed.filter((page) => keys.includes(page.key)).map(({ key, label: name, icon }) => ({ key, label: name, icon })) });
   const menu = <Menu theme="dark" mode="inline" selectedKeys={[tab]} onClick={({ key }) => { setTab(key as Tab); setMobileMenu(false); }} items={[
     group("直播教学", ["overview", "rooms"]), group("商品与兑换", ["stores", "products", "coupons", "orders"]),
