@@ -68,7 +68,9 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   web_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' live-training-web-1 2>/dev/null || echo none)"
   if [ "$api_status" = "healthy" ] && [ "$web_status" = "healthy" ]; then
     echo "  api: healthy / web: healthy"
-    printf '\n\033[1;32m发布成功\033[0m %s -> %s\n' "$PREV_COMMIT" "$NEW_COMMIT"
+    docker builder prune -af > /dev/null 2>&1 || true
+    docker image prune -f > /dev/null 2>&1 || true
+    printf '\n\033[1;32m发布成功\033[0m %s -> %s（已清理构建缓存）\n' "$PREV_COMMIT" "$NEW_COMMIT"
     exit 0
   fi
   sleep 5
