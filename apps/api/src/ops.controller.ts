@@ -34,7 +34,7 @@ export class OpsController {
 
     const [diskPercent, streams, mysqlOk, srsOk, minioOk] = await Promise.all([
       this.storage.diskUsagePercent(),
-      this.liveStreams().catch(() => [] as { streamName: string; clients: number; kbps: number }[]),
+      this.liveStreams().catch(() => [] as { streamName: string; clients: number; kbps: number; kbpsRecv: number }[]),
       tcpProbe("mysql", 3306),
       tcpProbe("srs", 1985),
       tcpProbe("minio", 9000)
