@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { unlink } from "node:fs/promises";
-import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Post, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, Body, Controller, HttpCode, Logger, NotFoundException, Post, ServiceUnavailableException } from "@nestjs/common";
 import { object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
@@ -87,7 +87,10 @@ export class CloudWebhookController {
         }
       });
       await this.audit.log({ action: "RECORDING_SAVED", detail: `课堂「${room.title}」新增回放（约 ${Math.max(1, Math.round(sizeBytes / 1024 / 1024))} MB）` });
-      await unlink(localPath).catch(() => undefined);
+      await unlink(localPath).catch((error: unknown) => {
+        // SRS 以 root 写文件、api 以 node 用户运行，删除失败时必须暴露出来，由服务器定时任务兑底清理。
+        new Logger(CloudWebhookController.name).error(`回放临时文件删除失败（将由定时任务清理）：${localPath} ${String(error)}`);
+      });
       return 0;
     }
 
