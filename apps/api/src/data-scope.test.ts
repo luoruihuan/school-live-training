@@ -54,7 +54,7 @@ test("列表查询只返回同侧数据，超管返回全部", async () => {
       findUnique: async () => null
     }
   } as unknown as PrismaService;
-  const business = new BusinessController(prisma, new StorageService({} as never), audit);
+  const business = new BusinessController(prisma, new StorageService({} as never, {} as never), audit);
   await business.stores(admin);
   await business.stores(testStudent);
   await business.stores(superAdmin);
@@ -90,7 +90,7 @@ test("超管创建的账号与店铺自动进入测试侧，管理员创建的�
       create: async ({ data }: { data: { isTest?: boolean } }) => { created.push(data); return data; }
     }
   } as unknown as PrismaService;
-  const business = new BusinessController(prisma, new StorageService({} as never), audit);
+  const business = new BusinessController(prisma, new StorageService({} as never, {} as never), audit);
   await business.createUser(superAdmin, { email: "probe@student.test", password: "123456", role: "STUDENT" });
   await business.createStore(superAdmin, { name: "测试店铺" });
   await business.createStore(admin, { name: "正式店铺" });

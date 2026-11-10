@@ -35,7 +35,7 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
   const request = { currentUser: student } as unknown as UserRequest;
   const admin = { currentUser: adminUser } as unknown as UserRequest;
   const teacher = { currentUser: { id: "test-teacher", role: "TEACHER" } } as UserRequest;
-  const business = new BusinessController(db, new StorageService({} as never), audit);
+  const business = new BusinessController(db, new StorageService({} as never, {} as never), audit);
   const commerce = new CommerceController(db, audit);
   const auth = new AuthService(db, audit);
   const accounts = new AccountController(db, new ChatGateway(auth, db), audit);

@@ -24,7 +24,7 @@ test("旧演示配置不能绕过云服务额度与访问权限", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new BusinessController(prisma, new StorageService({} as never), audit);
+  const controller = new BusinessController(prisma, new StorageService({} as never, {} as never), audit);
   await assert.rejects(controller.publishAddress(teacher, room.id), ServiceUnavailableException);
   await assert.rejects(controller.playbackAddress(room.id, teacher), ServiceUnavailableException);
   await assert.rejects(controller.publishAddress(student, room.id), ForbiddenException);
@@ -35,7 +35,7 @@ test("无录制记录时返回空列表，不生成示例回放", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new RecordingController(prisma, new StorageService({} as never), audit);
+  const controller = new RecordingController(prisma, new StorageService({} as never, {} as never), audit);
   assert.deepEqual(await controller.recordings(room.id, teacher), []);
   await assert.rejects(controller.playback(`mock-recording-${room.id}`, teacher), NotFoundException);
 });
@@ -44,7 +44,7 @@ test("MinIO 未配置时明确失败，不返回本地演示图片", async (t) =
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true", MINIO_ENDPOINT: "", MINIO_ROOT_USER: "", MINIO_ROOT_PASSWORD: "" };
-  const storage = new StorageService({} as never);
+  const storage = new StorageService({} as never, {} as never);
   await assert.rejects(storage.getImageStream(`product-images/${"a".repeat(32)}.png`), ServiceUnavailableException);
 });
 

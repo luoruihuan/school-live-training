@@ -16,7 +16,7 @@ function makeService(rows: RecordingRow[], usageSequence: (number | null)[]): St
       delete: async ({ where }: { where: { id: string } }) => { const index = rows.findIndex((row) => row.id === where.id); if (index >= 0) rows.splice(index, 1); }
     }
   } as unknown as PrismaService;
-  const service = new StorageService(prisma);
+  const service = new StorageService(prisma, { send: async () => undefined, checkDisk: async () => undefined } as never);
   const usages = [...usageSequence];
   service.diskUsagePercent = async () => usages.shift() ?? usages[usages.length - 1] ?? null;
   return service;
