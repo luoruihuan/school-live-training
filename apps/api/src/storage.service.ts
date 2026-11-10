@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaService } from "./prisma.service.js";
 import { recordingRetentionDays } from "./cloud-config.js";
+import { AlertService } from "./alert.service.js";
 
 export type ImageMime = "image/jpeg" | "image/png" | "image/webp";
 
@@ -23,7 +24,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   private readonly buckets = { images: "product-images", recordings: "recordings" } as const;
   private cleanupTimer?: NodeJS.Timeout;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly alert: AlertService) {}
 
   private client(): S3Client {
     const endpoint = process.env.MINIO_ENDPOINT;
@@ -119,6 +120,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   private async cleanup(): Promise<void> {
     await this.cleanupExpired();
     await this.cleanupByDiskWatermark();
+    await this.alert.checkDisk(await this.diskUsagePercent());
   }
 
   private async cleanupExpired(): Promise<void> {
@@ -150,6 +152,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       if (usage === null || usage < high) return;
       const oldestAllowed = new Date(Date.now() - minKeepDays * 24 * 60 * 60 * 1000);
       this.logger.warn(`磁盘使用率 ${usage}% ≥ ${high}%，开始提前清理 ${minKeepDays} 天前的最旧回放`);
+      await this.alert.send(`【校园直播·清理】磁盘使用率 ${usage}% 触及高水位（${high}%），开始自动删除 ${minKeepDays} 天前的最旧回放。`);
       const skipped = new Set<string>();
       let removed = 0;
       while (usage !== null && usage >= low && removed < 200) {
@@ -171,6 +174,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
         usage = await this.diskUsagePercent();
       }
       this.logger.log(`水位清理完成：提前删除 ${removed} 条（最小保留 ${minKeepDays} 天，当前磁盘 ${usage ?? "未知"}%）`);
+      await this.alert.send(`【校园直播·清理完成】水位清理结束：删除 ${removed} 条最旧回放，当前磁盘 ${usage ?? "未知"}%。`);
     } catch (error) {
       this.logger.error(`磁盘水位清理失败：${String(error)}`);
     }
