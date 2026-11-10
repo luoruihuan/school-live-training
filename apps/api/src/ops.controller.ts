@@ -42,14 +42,17 @@ export class OpsController {
 
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const since30 = new Date(Date.now() - 30 * 86400_000);
-    const [userTotal, todayLogins, activeSessions, recordingAgg, replayAgg, liveSeconds30] = await Promise.all([
+    const [userTotal, todayLogins, activeSessions, recordingAgg, replayAgg, liveSeconds30, liveRooms] = await Promise.all([
       this.prisma.user.count({ where: { isActive: true } }),
       this.prisma.auditLog.count({ where: { action: "LOGIN", createdAt: { gte: dayStart } } }),
       this.prisma.session.count({ where: { expiresAt: { gt: new Date() } } }),
       this.prisma.recording.aggregate({ _sum: { sizeMb: true }, _count: true }),
       this.prisma.recording.aggregate({ where: { createdAt: { gte: since30 } }, _sum: { sizeMb: true } }),
-      this.prisma.room.aggregate({ _sum: { liveSecondsTotal: true } })
+      this.prisma.room.aggregate({ _sum: { liveSecondsTotal: true } }),
+      this.prisma.room.findMany({ where: { status: "LIVE" }, select: { lastPublishAt: true } })
     ]);
+    // 进行中的直播尚未结算入库（停播回调才累加 liveSecondsTotal），实时补足当前流的已推秒数。
+    const ongoingSeconds = liveRooms.reduce((sum, room) => room.lastPublishAt ? sum + Math.max(0, Math.floor((Date.now() - room.lastPublishAt.getTime()) / 1000)) : sum, 0);
 
     const diskFreeGb = await this.diskFreeGb();
     const monthlyGrowthMb = replayAgg._sum.sizeMb ?? 0;
@@ -87,7 +90,7 @@ export class OpsController {
         diskFreeGb,
         recordingTotalMb: recordingAgg._sum.sizeMb ?? 0,
         recordingCount: recordingAgg._count,
-        liveSecondsTotal: liveSeconds30._sum.liveSecondsTotal ?? 0
+        liveSecondsTotal: (liveSeconds30._sum.liveSecondsTotal ?? 0) + ongoingSeconds
       },
       streams,
       viewers,
@@ -119,11 +122,12 @@ export class OpsController {
   private async liveStreams(): Promise<{ streamName: string; clients: number; kbps: number }[]> {
     const response = await fetch("http://srs:1985/api/v1/streams", { signal: AbortSignal.timeout(3000) });
     if (!response.ok) return [];
-    const data = await response.json() as { streams?: { name?: string; clients?: unknown[]; kbps?: { send?: number; video?: number; audio?: number } }[] };
+    // SRS 6 的 clients 是连接数（含推流者），send_30s 是近 30 秒平均发送码率（kbps）。
+    const data = await response.json() as { streams?: { name?: string; clients?: number; kbps?: { send_30s?: number } }[] };
     return (data.streams ?? []).map((stream) => ({
       streamName: stream.name ?? "",
-      clients: Array.isArray(stream.clients) ? stream.clients.length : 0,
-      kbps: Math.round((stream.kbps?.send ?? 0) / 1000)
+      clients: Math.max(0, (typeof stream.clients === "number" ? stream.clients : 0) - 1),
+      kbps: Math.round(stream.kbps?.send_30s ?? 0)
     })).filter((stream) => stream.streamName);
   }
 
