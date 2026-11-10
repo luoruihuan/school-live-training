@@ -67,7 +67,7 @@ test("SRS 录制回调：入库幂等，非法路径拒绝，SRS 容器路径映
     uploadRecordingFile: async () => undefined,
     deleteRecording: async () => undefined
   } as unknown as StorageService;
-  const controller = new CloudWebhookController(prisma, storage, audit, mockChat());
+  const controller = new CloudWebhookController(prisma, storage, audit, mockChat(), { send: async () => undefined } as never);
   const fileName = "stream1-1698400000.mp4";
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
