@@ -59,6 +59,12 @@ export class OpsController {
     const viewers = streams.reduce((sum, stream) => sum + stream.clients, 0);
 
     const alerts: Alert[] = [
+      ...streams.filter((stream) => stream.kbpsRecv > 2200).map((stream) => ({
+        key: `bitrate-${stream.streamName}`,
+        level: "warn" as const,
+        title: `推流码率偏高（${stream.kbpsRecv} kbps，建议 1200~1500）`,
+        message: "请在 OBS 设置 → 输出 → 串流中把码率降到 1200~1500 Kbps：720p 教学画面足够清晰，存储与带宿耗直接减半，可支撑的观看路数也从约 10 路提升到约 18 路。"
+      })),
       viewers >= VIEWER_DANGER
         ? { key: "viewers", level: "danger", title: `当前 ${viewers} 路同时观看，已到带宽上限`, message: "30Mbps 带宽按 2.5Mbps 码率最多支撑约 12 路流畅观看。请立即让教师把 OBS 码率降到 1.2~1.5Mbps（可撑约 20~24 路），或升级服务器带宽。" }
         : viewers >= VIEWER_WARN
@@ -119,15 +125,16 @@ export class OpsController {
     return { items, total, page, pageSize: 20, actions: actions.map((row) => ({ action: row.action, count: row._count })) };
   }
 
-  private async liveStreams(): Promise<{ streamName: string; clients: number; kbps: number }[]> {
+  private async liveStreams(): Promise<{ streamName: string; clients: number; kbps: number; kbpsRecv: number }[]> {
     const response = await fetch("http://srs:1985/api/v1/streams", { signal: AbortSignal.timeout(3000) });
     if (!response.ok) return [];
-    // SRS 6 的 clients 是连接数（含推流者），send_30s 是近 30 秒平均发送码率（kbps）。
-    const data = await response.json() as { streams?: { name?: string; clients?: number; kbps?: { send_30s?: number } }[] };
+    // SRS 6 的 clients 是连接数（含推流者），send_30s 是近 30 秒平均发送码率，recv_30s 是推流端上行码率（kbps）。
+    const data = await response.json() as { streams?: { name?: string; clients?: number; kbps?: { send_30s?: number; recv_30s?: number } }[] };
     return (data.streams ?? []).map((stream) => ({
       streamName: stream.name ?? "",
       clients: Math.max(0, (typeof stream.clients === "number" ? stream.clients : 0) - 1),
-      kbps: Math.round(stream.kbps?.send_30s ?? 0)
+      kbps: Math.round(stream.kbps?.send_30s ?? 0),
+      kbpsRecv: Math.round(stream.kbps?.recv_30s ?? 0)
     })).filter((stream) => stream.streamName);
   }
 

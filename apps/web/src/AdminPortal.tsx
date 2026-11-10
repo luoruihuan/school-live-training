@@ -34,7 +34,7 @@ export default function AdminPortal({ user, logout }: { user: User; logout: () =
     return true;
   });
   const group = (label: string, keys: Tab[]) => ({ type: "group" as const, label, children: allowed.filter((page) => keys.includes(page.key)).map(({ key, label: name, icon }) => ({ key, label: name, icon })) });
-  const menu = <Menu theme="dark" mode="inline" selectedKeys={[tab]} onClick={({ key }) => { setTab(key as Tab); setMobileMenu(false); }} items={[
+  const menu = <Menu theme="dark" mode="inline" selectedKeys={[tab]} onClick={({ key }) => { setTab(key as Tab); setMobileMenu(false); void data.refresh().catch(() => undefined); }} items={[
     group("直播教学", ["overview", "rooms"]), group("商品与兑换", ["stores", "products", "coupons", "orders"]),
     group("人员管理", ["accounts", "points"]), group("系统", ["ops"])
   ].filter((item) => item.children.length)} />;
