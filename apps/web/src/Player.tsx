@@ -80,7 +80,7 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
   }, [roomId, attempt, mock]);
 
   return <div className="player">
-    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} />
+    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} onStalled={() => { if (!mock && !error) setError("直播信号中断，正在等待画面恢复…"); }} />
     {idleStatus && !mock && !error && <div className="player__idle" aria-live="polite">
       <span className="player__idle-badge">{idleStatus === "ENDED" ? "已结束" : "未开播"}</span>
       {idleStatus === "ENDED" ? <PauseCircleOutlined className="player__idle-icon" /> : <VideoCameraOutlined className="player__idle-icon" />}
