@@ -42,7 +42,8 @@ export class CloudWebhookController {
     const action = stringField(input, "action", 40);
     const streamName = stringField(input, "stream", 100);
     const room = await this.prisma.room.findUnique({ where: { streamName } });
-    if (!room) return 0;
+    // 未知流名一律拒绝推流（返回非 2xx，SRS 会断开），防止任意流名占用带宽与录制。
+    if (!room) throw new NotFoundException("直播间不存在");
 
     if (action === "on_publish" || action === "on_unpublish") {
       if (action === "on_publish" && !verifyPublishToken(streamName, typeof input.param === "string" ? input.param : "")) {
