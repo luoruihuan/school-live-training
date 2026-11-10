@@ -108,6 +108,11 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
     this.server.to(`room:${roomId}`).emit("remove-message", { roomId, messageId });
   }
 
+  /** 当前互动连接数（打开了课堂页面的浏览器端），作为“当前在线”口径。 */
+  onlineConnections(): number {
+    return this.server?.sockets.sockets.size ?? 0;
+  }
+
   broadcastRoomStatus(roomId: string, status: "LIVE" | "ENDED"): void {
     this.server?.to(`room:${roomId}`).emit("room-status", { roomId, status });
   }

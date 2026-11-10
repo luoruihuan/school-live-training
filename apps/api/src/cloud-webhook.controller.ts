@@ -5,6 +5,7 @@ import { object, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { ChatGateway } from "./chat.gateway.js";
+import { AlertService } from "./alert.service.js";
 import { recordingRetentionDays } from "./cloud-config.js";
 import { AuditService } from "./audit.service.js";
 
@@ -33,7 +34,7 @@ function verifyPublishToken(streamName: string, param: string): boolean {
 
 @Controller("webhooks")
 export class CloudWebhookController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway, private readonly alert: AlertService) {}
 
   @Post("srs")
   @HttpCode(200)
@@ -64,6 +65,9 @@ export class CloudWebhookController {
         action: action === "on_publish" ? "PUBLISH_START" : "PUBLISH_STOP",
         detail: `课堂「${room.title}」${action === "on_publish" ? "开始直播" : `结束直播${room.lastPublishAt ? `（时长约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}`}`
       });
+      await this.alert.send(action === "on_publish"
+        ? `【校园直播·开播】课堂「${room.title}」已开始直播。`
+        : `【校园直播·停播】课堂「${room.title}」已停止推流${room.lastPublishAt ? `（本场约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}。若非正常下播，请检查教师端网络与 OBS。`);
       return 0;
     }
 
