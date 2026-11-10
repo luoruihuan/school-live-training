@@ -6,7 +6,7 @@ import { api } from "./api";
 type AlertItem = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
 type Overview = {
   server: { diskPercent: number | null; diskFreeGb: number | null; recordingTotalMb: number; recordingCount: number; liveSecondsTotal: number };
-  streams: { streamName: string; clients: number; kbps: number }[];
+  streams: { streamName: string; clients: number; kbps: number; kbpsRecv: number }[];
   viewers: number;
   services: { name: string; ok: boolean }[];
   users: { total: number; todayLogins: number; activeSessions: number };
@@ -75,7 +75,7 @@ export function OpsDashboard() {
           <Card title="服务状态">
             <Space wrap>{overview.services.map((service) => <Tag key={service.name} color={service.ok ? "green" : "red"}>{service.ok ? "●" : "○"} {service.name}</Tag>)}</Space>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
-              {overview.streams.length ? overview.streams.map((stream) => `${stream.streamName.slice(-6)}（${stream.clients} 路 · ${stream.kbps} kbps）`).join("；") : "当前没有正在进行的直播"}
+              {overview.streams.length ? overview.streams.map((stream) => `${stream.streamName.slice(-6)}（${stream.clients} 路 · 推流 ${stream.kbpsRecv} kbps）`).join("；") : "当前没有正在进行的直播"}
             </Typography.Paragraph>
           </Card>
         </Col>

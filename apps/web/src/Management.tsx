@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
-import { EditOutlined, LinkOutlined, PlusOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { EditOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import { api, pointText, patch, post, type Product, type Room, type Store } from "./api";
 import { EntityEditor, type EditorKind } from "./EntityEditor";
 import type { Platform } from "./usePlatform";
@@ -31,7 +31,7 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
       ]} />}
       {tab === "rooms" && <Table<Room> rowKey="id" dataSource={data.rooms.filter((r) => r.title.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 850 }} columns={[
         { title: "课堂名称", dataIndex: "title", render: (v: string, r: Room) => <><TestTag show={r.isTest} /><strong>{v}</strong></> }, { title: "所属店铺", render: (_, r) => r.store.name },
-        { title: "状态", render: (_, r) => <RoomStatus status={r.status} /> }, { title: "操作", render: (_, r) => <Space wrap size={0}>
+        { title: "状态", render: (_, r) => <Space size={4}><RoomStatus status={r.status} /><Button type="text" size="small" aria-label="刷新直播间状态" title="刷新直播间状态" icon={<ReloadOutlined spin={data.busy} />} disabled={data.busy} onClick={() => void data.run(data.refresh, "直播间状态已刷新")} /></Space> }, { title: "操作", render: (_, r) => <Space wrap size={0}>
           <Button type="link" onClick={() => setSetupRoomId(r.id)}>配置本场</Button><Button type="link" onClick={() => setPreview({ room: r, mode: "live" })}>查看课堂</Button>
         </Space> }
       ]} />}
@@ -54,7 +54,7 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
       {preview?.mode === "replay" ? <Replay roomId={preview.room.id} /> : preview && <><Player roomId={preview.room.id} previewMock={preview.mode === "mock"} /><Chat roomId={preview.room.id} canModerate /></>}
     </Modal>
     <Modal title={publish?.title ? `${publish.title} · 推流设置` : "推流设置"} open={!!publish} onCancel={() => setPublish(undefined)} footer={<Button onClick={() => setPublish(undefined)}>关闭</Button>}>
-      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="info" showIcon title="请在 OBS 中选择自定义服务，填入以下信息" description="推流信息仅交给授课教师；实际结束直播请停止 OBS 推流。" />
+      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="info" showIcon title="请在 OBS 中选择自定义服务，填入以下信息" description="推流信息仅交给授课教师；实际结束直播请停止 OBS 推流。建议在 OBS 设置 → 输出 → 串流中把码率设为 1200~1500 Kbps（720p 教学画质足够，存储与带宽减半）。" />
         <div><b>OBS 服务器</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(0, publish.url.lastIndexOf("/"))}</Typography.Paragraph></div><div><b>OBS 串流密钥</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(publish.url.lastIndexOf("/") + 1)}</Typography.Paragraph></div>
         <p className="muted">地址有效至 {new Date(publish.expiresAt).toLocaleString("zh-CN")}。过期后重新获取。</p>
       </Space>}
