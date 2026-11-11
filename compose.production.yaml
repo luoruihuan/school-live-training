@@ -122,6 +122,9 @@ services:
     image: docker.io/pgsty/silo:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
+    # 仅绑定本机回环：供宿主机 rclone 备份访问，替代不稳定的容器动态 IP；不暴露公网
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?设置 MinIO 用户}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?设置 MinIO 密码}
