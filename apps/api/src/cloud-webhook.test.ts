@@ -35,7 +35,7 @@ test("SRS 推流回调校验 token：合法放行、无效拒绝、过期拒绝"
       updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; }
     }
   } as unknown as PrismaService;
-  const callback = new CloudWebhookController(prisma, mockStorage(""), audit, mockChat(broadcasts));
+  const callback = new CloudWebhookController(prisma, mockStorage(""), audit, mockChat(broadcasts), { send: async () => undefined } as never);
   const expire = Math.floor(Date.now() / 1000) + 3600;
   const token = publishToken("stream1", expire);
   await callback.srs({ action: "on_publish", stream: "stream1", param: `?token=${token}&expire=${expire}` });
