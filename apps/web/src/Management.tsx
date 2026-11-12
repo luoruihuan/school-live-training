@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
-import { EditOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { EditOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, ShoppingCartOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import { api, pointText, patch, post, type Product, type Room, type Store } from "./api";
 import { EntityEditor, type EditorKind } from "./EntityEditor";
 import type { Platform } from "./usePlatform";
@@ -50,8 +50,12 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
     {binding && <RoomProducts room={binding} data={data} close={() => setBinding(undefined)} />}
     {couponsRoom && <RoomCoupons room={couponsRoom} data={data} close={() => setCouponsRoom(undefined)} create={() => { setEditor({ kind: "coupon", roomId: couponsRoom.id }); setCouponsRoom(undefined); }} />}
     {setupRoomId && data.rooms.find((room) => room.id === setupRoomId) && <RoomSetup room={data.rooms.find((room) => room.id === setupRoomId)!} close={() => setSetupRoomId(undefined)} edit={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setEditor({ kind: "room", entity: room }); }} bind={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setBinding(room); }} coupon={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setCouponsRoom(room); }} publish={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; void data.run(async () => { const result = await api<{ url: string; expiresAt: string }>(`/rooms/${room.id}/publish`); setPublish({ title: room.title, ...result }); setSetupRoomId(undefined); }, "推流信息已获取"); }} preview={(mode) => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setPreview({ room, mode }); }} />}
-    <Modal title={preview && `${preview.room.title} · ${preview.mode === "replay" ? "课程回放" : "课堂预览"}`} open={!!preview} onCancel={() => setPreview(undefined)} footer={<Button onClick={() => setPreview(undefined)}>关闭</Button>} width={760} destroyOnHidden>
-      {preview?.mode === "replay" ? <Replay roomId={preview.room.id} /> : preview && <><Player roomId={preview.room.id} previewMock={preview.mode === "mock"} /><Chat roomId={preview.room.id} canModerate /></>}
+    <Modal title={preview && `${preview.room.title} · ${preview.mode === "replay" ? "课程回放" : "课堂预览（右上角关闭）"}`} open={!!preview} onCancel={() => setPreview(undefined)} footer={null} width={760} destroyOnHidden>
+      {preview?.mode === "replay" ? <Replay roomId={preview.room.id} /> : preview && <>
+        <Player roomId={preview.room.id} previewMock={preview.mode === "mock"} />
+        {preview.mode === "live" && <RoomProductsPanel room={preview.room} data={data} />}
+        <Chat roomId={preview.room.id} canModerate />
+      </>}
     </Modal>
     <Modal title={publish?.title ? `${publish.title} · 推流设置` : "推流设置"} open={!!publish} onCancel={() => setPublish(undefined)} footer={<Button onClick={() => setPublish(undefined)}>关闭</Button>}>
       {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="info" showIcon title="请在 OBS 中选择自定义服务，填入以下信息" description="推流信息仅交给授课教师；实际结束直播请停止 OBS 推流。建议在 OBS 设置 → 输出 → 串流中把码率设为 1200~1500 Kbps（720p 教学画质足够，存储与带宽减半）。" />
@@ -93,18 +97,28 @@ function RoomCoupons({ room, data, close, create }: { room: Room; data: Platform
   </Modal>;
 }
 
-function RoomProducts({ room, data, close }: { room: Room; data: Platform; close: () => void }) {
+/** 直播中控：可嵌入“查看课堂”预览的实时上下架面板（绑定/解绑即时广播到学生端小黄车）。 */
+export function RoomProductsPanel({ room, data }: { room: Room; data: Platform }) {
   const [items, setItems] = useState<Product[]>([]);
   const [error, setError] = useState("");
   const { message } = App.useApp();
   const [form] = Form.useForm<{ productId: string; position: number }>();
   async function load() { setItems(await api<Product[]>(`/rooms/${room.id}/products`)); setError(""); }
   useEffect(() => { void load().catch((e: unknown) => setError(e instanceof Error ? e.message : "读取失败")); }, [room.id]);
-  async function change(action: () => Promise<unknown>) { if (await data.run(action, "本场商品已更新")) await load().catch(() => message.error("列表刷新失败，请重新打开")); }
-  return <Modal open title={`${room.title} · 本场商品`} onCancel={close} footer={<Button onClick={close}>完成</Button>}>
+  async function change(action: () => Promise<unknown>) { if (await data.run(action, "本场商品已更新，学生端已实时同步")) await load().catch(() => message.error("列表刷新失败，请重新打开")); }
+  return <Card className="spaced-top" size="small" title={<Space><ShoppingCartOutlined /> 实时上下架 <Tag color={room.status === "LIVE" ? "green" : "default"}>{room.status === "LIVE" ? "直播中·操作即时同步学生端" : "未开播"}</Tag></Space>}>
     {error && <Alert type="error" title={error} />}
-    <Form form={form} layout="vertical" initialValues={{ position: 0 }} onFinish={(v) => void change(() => post(`/rooms/${room.id}/products`, v))}>
-      <Form.Item name="productId" label="同店铺商品" rules={[{ required: true, message: "请选择商品" }]}><Select placeholder="第一步：选择要加入小黄车的商品" options={data.products.filter((p) => p.storeId === room.storeId).map((p) => ({ value: p.id, label: `${p.name}${p.isActive ? "" : "（已下架）"}` }))} /></Form.Item><Form.Item name="position" label="展示顺序（越小越靠前）" rules={[{ required: true }]}><InputNumber min={0} max={9999} precision={0} /></Form.Item><Button htmlType="submit" type="primary" loading={data.busy}>选好商品后点这里绑定到本场</Button>
-    </Form><div className="spaced-top">{items.map((p) => <div className="binding-row" key={p.id}><span><Tag>{p.position ?? 0}</Tag>{p.name}{!p.isActive && <Tag>已下架</Tag>}</span><Popconfirm title="从本场移除此商品？" onConfirm={() => change(() => api(`/rooms/${room.id}/products/${p.id}`, { method: "DELETE" }))}><Button type="text" danger disabled={data.busy}>解绑</Button></Popconfirm></div>)}{!items.length && <NoData text="本场暂未绑定商品" />}</div>
+    <Form form={form} layout="inline" initialValues={{ position: 0 }} onFinish={(v) => void change(() => post(`/rooms/${room.id}/products`, v))}>
+      <Form.Item name="productId" rules={[{ required: true, message: "请选择商品" }]} style={{ minWidth: 260 }}><Select placeholder="选择要上架的商品" options={data.products.filter((p) => p.storeId === room.storeId).map((p) => ({ value: p.id, label: `${p.name}${p.isActive ? "" : "（已下架）"}` }))} /></Form.Item>
+      <Form.Item name="position" rules={[{ required: true }]}><InputNumber min={0} max={9999} precision={0} placeholder="顺序" /></Form.Item>
+      <Button htmlType="submit" type="primary" loading={data.busy}>上架</Button>
+    </Form>
+    <div className="spaced-top" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{items.map((p) => <Tag closable key={p.id} onClose={(e) => { e.preventDefault(); void change(() => api(`/rooms/${room.id}/products/${p.id}`, { method: "DELETE" })); }}>{p.position ?? 0} · {p.name}{!p.isActive && "（已下架）"}</Tag>)}{!items.length && <span className="muted small">本场暂未绑定商品</span>}</div>
+  </Card>;
+}
+
+function RoomProducts({ room, data, close }: { room: Room; data: Platform; close: () => void }) {
+  return <Modal open title={`${room.title} · 本场商品`} onCancel={close} footer={<Button onClick={close}>完成</Button>}>
+    <RoomProductsPanel room={room} data={data} />
   </Modal>;
 }

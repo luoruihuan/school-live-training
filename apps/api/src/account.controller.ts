@@ -15,6 +15,9 @@ import { dataScope, isTestCreator, scoped } from "./data-scope.js";
 export const IMPORT_MAX_ROWS = 500;
 export const BATCH_MAX_USERS = 500;
 
+/** 导入模板自带的示例行（正式导入前可删除；不删除时解析器自动跳过，不会创建账号） */
+export const TEMPLATE_EXAMPLE_ROW = { email: "20260001", displayName: "张三", role: "学生", password: "zs123456" } as const;
+
 export type ImportRow = { row: number; email: string; displayName: string; role: "TEACHER" | "STUDENT"; password: string };
 export type ImportIssue = { row: number; email: string; reason: string };
 
@@ -28,6 +31,7 @@ export function parseImportRows(rows: (string | number | null | undefined)[][]):
     const values = cells.map((cell) => (typeof cell === "string" ? cell.trim() : cell === null || cell === undefined ? "" : String(cell).trim()));
     const email = values[0] ?? "";
     if (!values.some((value) => value !== "")) return; // 整行空白跳过
+    if (values[0] === TEMPLATE_EXAMPLE_ROW.email && values[1] === TEMPLATE_EXAMPLE_ROW.displayName) return; // 模板示例行：自动跳过
     if (!email) { issues.push({ row, email: "", reason: "账号（第 1 列）未填写" }); return; }
     if (!/^[a-zA-Z0-9._@-]{2,100}$/.test(email)) { issues.push({ row, email, reason: "账号仅支持字母、数字、点、下划线、@、中划线" }); return; }
     if (seen.has(email.toLowerCase())) { issues.push({ row, email, reason: "与前面行重复" }); return; }
@@ -208,14 +212,18 @@ export class AccountController {
   async importTemplate(@Req() request: UserRequest, @Res() response: Response) {
     this.admin(request);
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("users");
+    const sheet = workbook.addWorksheet("账号导入");
     sheet.columns = [
-      { header: "account (required: student-id or email, 2-100 chars)", key: "email", width: 46 },
-      { header: "name (optional, default = account)", key: "displayName", width: 30 },
-      { header: "role (student/teacher, default student)", key: "role", width: 30 },
-      { header: "initial password (optional, 6-200 chars, default 123456)", key: "password", width: 46 }
+      { header: "账号（必填：学号或邮箱，2~100 位字母/数字/._@-）", key: "email", width: 44 },
+      { header: "姓名（选填，不填默认同账号）", key: "displayName", width: 26 },
+      { header: "角色（填：学生 或 教师，不填默认学生）", key: "role", width: 28 },
+      { header: "初始密码（选填，6~200 位，不填默认 123456）", key: "password", width: 34 }
     ];
     sheet.getRow(1).font = { bold: true };
+    // 示例行：灰色斜体供参考；正式导入前可删除，不删除也会被自动跳过
+    const example = sheet.addRow([TEMPLATE_EXAMPLE_ROW.email, TEMPLATE_EXAMPLE_ROW.displayName, TEMPLATE_EXAMPLE_ROW.role, TEMPLATE_EXAMPLE_ROW.password]);
+    example.font = { italic: true, color: { argb: "FF9AA0A6" } };
+    example.getCell(1).note = "示例行：仅供填写参考。正式导入前可删除本行；不删除时系统会自动跳过，不会创建该账号。";
     const buffer = await workbook.xlsx.writeBuffer();
     response.status(200);
     response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
