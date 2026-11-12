@@ -60,6 +60,7 @@ export class CommerceController {
       name: stringField(input, "name", 80),
       isTest: isTestCreator(request.currentUser),
       pointsDiscount: integerField(input, "pointsDiscount", 1, 1_000_000),
+      minSpend: input.minSpend === undefined ? 0 : integerField(input, "minSpend", 0, 1_000_000),
       expiresAt
     } });
   }
@@ -158,6 +159,7 @@ export class CommerceController {
           item.product.rooms.some((binding) => binding.roomId === claimed.coupon.roomId))
           .reduce((sum, item) => sum + item.product.pointsPrice * item.quantity, 0);
         if (eligible === 0) throw new BadRequestException("小黄车没有适用该优惠券的商品");
+        if (eligible < claimed.coupon.minSpend) throw new BadRequestException(`此券需适用商品合计满 ${claimed.coupon.minSpend} 积分才能使用`);
         pointsDiscount = Math.min(eligible, claimed.coupon.pointsDiscount);
       }
       const pointsTotal = pointsSubtotal - pointsDiscount;

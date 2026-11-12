@@ -60,3 +60,4 @@ ssh tokyo 'ls -la /srv/live-training/backups/'                                  
 |---|---|---|
 | 20261109-01-add-istest.sql | 五表增加 isTest 测试侧标记列 | 2026-11-09（手动执行后补登记） |
 | 20261112-01-product-detail-images.sql | 商品详情介绍图表 ProductDetailImage | 未发布（随本轮功能上线） |
+| 20261112-02-coupon-minspend.sql | 优惠券满减门槛列 minSpend（0=无门槛） | 未发布（随本轮功能上线） |
