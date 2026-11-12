@@ -28,7 +28,10 @@ export type Product = {
   isActive: boolean;
 };
 export type CartItem = { productId: string; quantity: number; product: Product & { roomIds: string[] } };
-export type Coupon = { id: string; storeId: string; roomId: string; name: string; isTest?: boolean; pointsDiscount: number; expiresAt: string; store: { name: string }; room: { title: string } };
+export type Coupon = { id: string; storeId: string; roomId: string; name: string; isTest?: boolean; pointsDiscount: number; minSpend: number; expiresAt: string; store: { name: string }; room: { title: string } };
+export function couponRuleText(coupon: Pick<Coupon, "pointsDiscount" | "minSpend">): string {
+  return coupon.minSpend > 0 ? `满 ${coupon.minSpend} 减 ${coupon.pointsDiscount}` : `直减 ${coupon.pointsDiscount}`;
+}
 export type UserCoupon = { id: string; couponId: string; usedAt: string | null; coupon: Omit<Coupon, "store" | "room"> };
 export type PointEntry = { id: string; delta: number; balanceAfter: number; reason: string; createdAt: string };
 export type Points = { balance: number; entries: PointEntry[] };

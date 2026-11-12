@@ -155,6 +155,7 @@ model Coupon {
   name          String
   isTest        Boolean      @default(false)
   pointsDiscount Int
+  minSpend      Int          @default(0)
   expiresAt     DateTime
   createdAt     DateTime     @default(now())
   claims        UserCoupon[]

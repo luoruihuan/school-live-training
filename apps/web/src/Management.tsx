@@ -41,7 +41,7 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
         { title: "操作", render: (_, p) => <Space><Button type="link" onClick={() => setEditor({ kind: "product", entity: p })}>编辑</Button><Popconfirm title={`确认${p.isActive ? "下架" : "上架"}该商品？`} onConfirm={() => data.run(() => patch(`/products/${p.id}`, { isActive: !p.isActive }), "商品状态已更新")}><Button type="link" danger={p.isActive} disabled={data.busy}>{p.isActive ? "下架" : "上架"}</Button></Popconfirm></Space> }
       ]} />}
       {tab === "coupons" && <Table rowKey="id" dataSource={data.coupons.filter((c) => c.name.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 600 }} columns={[
-        { title: "优惠券", dataIndex: "name", render: (v: string, c) => <><TestTag show={c.isTest} />{v}</> }, { title: "适用直播间", render: (_, c) => `${c.store.name} / ${c.room.title}` }, { title: "抵扣积分", render: (_, c) => pointText(c.pointsDiscount) }, { title: "到期时间", render: (_, c) => new Date(c.expiresAt).toLocaleString("zh-CN") },
+        { title: "优惠券", dataIndex: "name", render: (v: string, c) => <><TestTag show={c.isTest} />{v}</> }, { title: "适用直播间", render: (_, c) => `${c.store.name} / ${c.room.title}` }, { title: "抵扣规则", render: (_, c) => c.minSpend > 0 ? `满 ${c.minSpend} 减 ${c.pointsDiscount} 积分` : `直减 ${pointText(c.pointsDiscount)}` }, { title: "到期时间", render: (_, c) => new Date(c.expiresAt).toLocaleString("zh-CN") },
         { title: "操作", render: (_, c) => <Popconfirm title="停用后，已领取但未使用的券也将无法抵扣。确认停用？" onConfirm={() => void data.run(() => patch(`/coupons/${c.id}/expire`, {}), "优惠券已停用")}><Button type="link" danger disabled={data.busy}>停用</Button></Popconfirm> }
       ]} />}
     </Card>
