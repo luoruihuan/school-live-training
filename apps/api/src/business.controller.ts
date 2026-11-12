@@ -290,10 +290,15 @@ export class BusinessController {
     assertSameSide(room, product);
     if (room.storeId !== product.storeId) throw new BadRequestException("商品不属于直播间店铺");
     const position = input.position === undefined ? 0 : integerField(input, "position", 0, 9999);
-    return this.prisma.roomProduct.upsert({
+    const binding = await this.prisma.roomProduct.upsert({
       where: { roomId_productId: { roomId: id, productId } },
       update: { position }, create: { roomId: id, productId, position }
     });
+    // 非准备中的课堂才实时推送（DRAFT 课堂对学生不可见，无需广播）
+    if (room.status !== "DRAFT") {
+      this.chat.broadcastRoomProducts(id, "bound", { id: product.id, name: product.name, pointsPrice: product.pointsPrice, isActive: product.isActive, position: binding.position });
+    }
+    return binding;
   }
 
   @Delete("rooms/:id/products/:productId")
