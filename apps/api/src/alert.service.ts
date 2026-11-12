@@ -33,10 +33,10 @@ export class AlertService {
     if (percent === null) return;
     if (!this.diskAlerted && percent >= DISK_ALERT_PERCENT) {
       this.diskAlerted = true;
-      await this.send(`【校园直播·注意】磁盘使用率已达 ${percent}%（阈值 80%）\n回放自动清理将在 85% 启动（30 天内保底保留）。请检查回放数量或规划扩容。`);
+      await this.send(`[disk warn] Disk usage ${percent}% (threshold ${DISK_ALERT_PERCENT}%).\nAuto cleanup will start at 85%. Please check replays or plan more storage.`);
     } else if (this.diskAlerted && percent < DISK_RECOVER_PERCENT) {
       this.diskAlerted = false;
-      await this.send(`【校园直播·恢复】磁盘使用率已回落到 ${percent}%（低于 75%），此前的磁盘告警解除。`);
+      await this.send(`[disk ok] Disk usage back to ${percent}% (< ${DISK_RECOVER_PERCENT}%), previous disk alert cleared.`);
     }
   }
 }

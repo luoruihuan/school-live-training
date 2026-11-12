@@ -24,7 +24,7 @@ test("旧演示配置不能绕过云服务额度与访问权限", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, MOCK_LIVE: "true" };
-  const controller = new BusinessController(prisma, new StorageService({} as never, {} as never), audit);
+  const controller = new BusinessController(prisma, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
   await assert.rejects(controller.publishAddress(teacher, room.id), ServiceUnavailableException);
   await assert.rejects(controller.playbackAddress(room.id, teacher), ServiceUnavailableException);
   await assert.rejects(controller.publishAddress(student, room.id), ForbiddenException);

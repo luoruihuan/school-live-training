@@ -13,6 +13,21 @@ import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
 import { dataScope, isTestCreator, sameSideCreate, scoped, assertSameSide } from "./data-scope.js";
 import { publishToken } from "./cloud-webhook.controller.js";
+import { ChatGateway } from "./chat.gateway.js";
+
+const DETAIL_IMAGE_KEY_PATTERN = /^product-images\/[a-f0-9]{32}\.(jpg|png|webp)$/;
+export const MAX_DETAIL_IMAGES = 9;
+
+export function detailImageKeys(input: Record<string, unknown>): string[] | undefined {
+  const value = input.detailImages;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new BadRequestException("详情图片格式不正确");
+  if (value.length > MAX_DETAIL_IMAGES) throw new BadRequestException(`详情图片最多 ${MAX_DETAIL_IMAGES} 张`);
+  return value.map((key): string => {
+    if (typeof key !== "string" || !DETAIL_IMAGE_KEY_PATTERN.test(key)) throw new BadRequestException("详情图片对象键不正确");
+    return key;
+  });
+}
 
 function liveDomain(): string {
   const value = process.env.APP_DOMAIN;
@@ -20,14 +35,20 @@ function liveDomain(): string {
   return value;
 }
 
+type ProductWithDetailImages = Product & { detailImages: { imageKey: string }[] };
+
 @Controller()
 @UseGuards(AuthGuard)
 export class BusinessController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway) {}
 
-  private async withImage(product: Product): Promise<Product> {
-    if (!product.imageKey) return product;
-    return { ...product, imageUrl: `/api/product-images/${product.id}` };
+  private withImage<T extends ProductWithDetailImages>(product: T): Omit<T, "detailImages"> & { detailImageKeys: string[] } {
+    const { detailImages, ...rest } = product;
+    return {
+      ...rest,
+      ...(rest.imageKey ? { imageUrl: `/api/product-images/${rest.id}` } : {}),
+      detailImageKeys: detailImages.map((item) => item.imageKey)
+    };
   }
 
   @Post("users")
@@ -55,6 +76,20 @@ export class BusinessController {
     const product = scoped(await this.prisma.product.findUnique({ where: { id } }), request.currentUser, "商品图片不存在");
     if (!product.imageKey) throw new NotFoundException("商品图片不存在");
     const { stream, contentType } = await this.storage.getImageStream(product.imageKey);
+    response.status(200);
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Cache-Control", "private, max-age=86400");
+    stream.pipe(response);
+  }
+
+  @Get("products/:id/detail-images/:index")
+  async productDetailImage(@Req() request: UserRequest, @Param("id") id: string, @Param("index") index: string, @Res() response: Response) {
+    const product = scoped(await this.prisma.product.findUnique({
+      where: { id }, select: { id: true, isTest: true, detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } }
+    }), request.currentUser, "商品图片不存在");
+    const order = Number(index);
+    if (!Number.isInteger(order) || order < 0 || order >= product.detailImages.length) throw new NotFoundException("商品图片不存在");
+    const { stream, contentType } = await this.storage.getImageStream(product.detailImages[order].imageKey);
     response.status(200);
     response.setHeader("Content-Type", contentType);
     response.setHeader("Cache-Control", "private, max-age=86400");
@@ -160,9 +195,10 @@ export class BusinessController {
   async products(@Req() request: UserRequest) {
     const staff = isAdminRole(request.currentUser.role) || request.currentUser.role === "TEACHER";
     const products = await this.prisma.product.findMany({
-      where: { ...(staff ? {} : { isActive: true, rooms: { some: { room: { status: { not: "DRAFT" } } } } }), ...dataScope(request.currentUser) ?? {} }, orderBy: { createdAt: "desc" }
+      where: { ...(staff ? {} : { isActive: true, rooms: { some: { room: { status: { not: "DRAFT" } } } } }), ...dataScope(request.currentUser) ?? {} }, orderBy: { createdAt: "desc" },
+      include: { detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } }
     });
-    return Promise.all(products.map((product) => this.withImage(product)));
+    return products.map((product) => this.withImage(product));
   }
 
   @Post("products")
@@ -173,6 +209,7 @@ export class BusinessController {
     sameSideCreate(scoped(await this.prisma.store.findUnique({ where: { id: storeId } }), request.currentUser, "店铺不存在"), request.currentUser);
     const imageUrl = optionalString(input, "imageUrl", 500);
     const imageKey = optionalString(input, "imageKey", 200);
+    const detailKeys = detailImageKeys(input);
     if (imageUrl && !imageUrl.startsWith("https://")) throw new BadRequestException("图片地址必须是 HTTPS");
     if (imageKey && !/^product-images\/[a-f0-9]{32}\.(jpg|png|webp)$/.test(imageKey)) {
       throw new BadRequestException("图片对象键不正确");
@@ -184,14 +221,15 @@ export class BusinessController {
       description: optionalString(input, "description") ?? "",
       pointsPrice: integerField(input, "pointsPrice", 1, 1_000_000),
       pickupPoint: stringField(input, "pickupPoint", 200),
-      imageUrl, imageKey
-    } });
+      imageUrl, imageKey,
+      ...(detailKeys ? { detailImages: { create: detailKeys.map((imageKey, position) => ({ imageKey, position })) } } : {})
+    }, include: { detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } } }).then((product) => this.withImage(product));
   }
 
   @Patch("products/:id")
   async updateProduct(@Req() request: UserRequest, @Param("id") id: string, @Body() body: unknown) {
     requireStaff(request.currentUser);
-    scoped(await this.prisma.product.findUnique({ where: { id } }), request.currentUser, "商品不存在");
+    const previous = scoped(await this.prisma.product.findUnique({ where: { id }, include: { detailImages: { select: { imageKey: true } } } }), request.currentUser, "商品不存在");
     const input = object(body);
     const name = optionalString(input, "name", 100);
     const description = optionalString(input, "description", 1000);
@@ -202,10 +240,29 @@ export class BusinessController {
     if (isActive !== undefined && typeof isActive !== "boolean") throw new BadRequestException("上架状态不正确");
     const pointsPrice = input.pointsPrice === undefined ? undefined : integerField(input, "pointsPrice", 1, 1_000_000);
     const pickupPoint = input.pickupPoint === undefined ? undefined : stringField(input, "pickupPoint", 200);
-    return this.prisma.product.update({
-      where: { id }, data: { name, description, pointsPrice, pickupPoint, isActive: isActive as boolean | undefined,
-        ...(imageKey === undefined ? {} : { imageKey: imageKey || null, imageUrl: null }) }
+    const detailKeys = detailImageKeys(input);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { id }, data: { name, description, pointsPrice, pickupPoint, isActive: isActive as boolean | undefined,
+          ...(imageKey === undefined ? {} : { imageKey: imageKey || null, imageUrl: null }) },
+        include: { detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } }
+      });
+      if (detailKeys) {
+        await tx.productDetailImage.deleteMany({ where: { productId: id } });
+        if (detailKeys.length) {
+          await tx.productDetailImage.createMany({ data: detailKeys.map((key, position) => ({ productId: id, imageKey: key, position })) });
+        }
+      }
+      return product;
     });
+    // 主图被替换或清空时删除旧对象；详情图整组替换时删除不再引用的旧对象（失败仅记日志）。
+    if (imageKey !== undefined && previous.imageKey && imageKey !== previous.imageKey) await this.storage.deleteImage(previous.imageKey);
+    if (detailKeys) {
+      for (const item of previous.detailImages) {
+        if (!detailKeys.includes(item.imageKey)) await this.storage.deleteImage(item.imageKey);
+      }
+    }
+    return this.withImage(updated);
   }
 
   @Get("rooms/:id/products")
@@ -213,9 +270,9 @@ export class BusinessController {
     await this.room(id, request);
     const bindings = await this.prisma.roomProduct.findMany({
       where: { roomId: id, ...(request.currentUser.role === "STUDENT" ? { product: { isActive: true } } : {}) },
-      include: { product: true }, orderBy: { position: "asc" }
+      include: { product: { include: { detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } } } }, orderBy: { position: "asc" }
     });
-    return Promise.all(bindings.map(async ({ product, position }) => ({ ...await this.withImage(product), position })));
+    return bindings.map(({ product, position }) => ({ ...this.withImage(product), position }));
   }
 
   @Post("rooms/:id/products")
@@ -242,16 +299,21 @@ export class BusinessController {
   @Delete("rooms/:id/products/:productId")
   async unbindProduct(@Req() request: UserRequest, @Param("id") id: string, @Param("productId") productId: string) {
     requireStaff(request.currentUser);
-    visibleRoom(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser);
-    return this.prisma.roomProduct.deleteMany({ where: { roomId: id, productId } });
+    const room = visibleRoom(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser);
+    const result = await this.prisma.roomProduct.deleteMany({ where: { roomId: id, productId } });
+    if (result.count && room.status !== "DRAFT") {
+      const product = await this.prisma.product.findUnique({ where: { id: productId }, select: { id: true, name: true, pointsPrice: true, isActive: true } });
+      if (product) this.chat.broadcastRoomProducts(id, "unbound", { ...product, position: 0 });
+    }
+    return result;
   }
 
   @Get("cart")
   async cart(@Req() request: UserRequest) {
     const items = await this.prisma.cartItem.findMany({
-      where: { userId: request.currentUser.id }, include: { product: { include: { rooms: { select: { roomId: true } } } } }
+      where: { userId: request.currentUser.id }, include: { product: { include: { rooms: { select: { roomId: true } }, detailImages: { select: { imageKey: true }, orderBy: { position: "asc" } } } } }
     });
-    return Promise.all(items.map(async (item) => ({ ...item, product: { ...await this.withImage(item.product), roomIds: item.product.rooms.map((room) => room.roomId) } })));
+    return items.map((item) => ({ ...item, product: { ...this.withImage(item.product), roomIds: item.product.rooms.map((room) => room.roomId) } }));
   }
 
   @Post("cart")

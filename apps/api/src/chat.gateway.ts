@@ -117,6 +117,11 @@ export class ChatGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
     this.server?.to(`room:${roomId}`).emit("room-status", { roomId, status });
   }
 
+  /** 本场商品绑定关系变化（实时上/下链接）：向直播间内观众推送商品概要。 */
+  broadcastRoomProducts(roomId: string, action: "bound" | "unbound", product: { id: string; name: string; pointsPrice: number; isActive: boolean; position: number }): void {
+    this.server?.to(`room:${roomId}`).emit("room-products", { roomId, action, product });
+  }
+
   disconnectUser(userId: string): void {
     for (const client of this.server?.sockets.sockets.values() ?? []) {
       if (client.data.userId === userId) client.disconnect(true);

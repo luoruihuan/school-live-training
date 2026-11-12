@@ -23,6 +23,7 @@ export type Product = {
   pickupPoint: string;
   imageUrl: string | null;
   imageKey?: string | null;
+  detailImageKeys?: string[];
   position?: number;
   isActive: boolean;
 };
@@ -86,6 +87,41 @@ export async function uploadImage(file: File): Promise<string> {
   }
   const result: { imageKey: string } = await response.json();
   return result.imageKey;
+}
+
+/** 通用鉴权文件上传（如 Excel 账号导入），返回解析后的 JSON。 */
+export async function uploadJson<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await fetch(`/api${path}`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-School-Live-Request": "1" } });
+  const body: T | { message?: string | string[] } = await response.json().catch(() => ({} as T));
+  if (!response.ok) {
+    const errorBody = body as { message?: string | string[] };
+    const text = errorBody.message ? Array.isArray(errorBody.message) ? errorBody.message.join("；") : errorBody.message : `上传失败（${response.status}）`;
+    throw new Error(text);
+  }
+  return body as T;
+}
+
+/** 鉴权下载（如 Excel 导入模板），保存为浏览器下载。 */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const response = await fetch(`/api${path}`, { credentials: "same-origin", headers: { "X-School-Live-Request": "1" } });
+  if (!response.ok) {
+    const body: { message?: string } = await response.json().catch(() => ({}));
+    throw new Error(body.message ?? `下载失败（${response.status}）`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** 商品介绍图（详情图）访问地址：按商品 id + 序号，需登录态。 */
+export function detailImageUrl(productId: string, index: number): string {
+  return `/api/products/${productId}/detail-images/${index}`;
 }
 
 export function pointText(value: number): string {
