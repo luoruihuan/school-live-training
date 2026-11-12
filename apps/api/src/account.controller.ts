@@ -12,7 +12,7 @@ import { AuditService } from "./audit.service.js";
 import { isAdminRole } from "./auth.guard.js";
 import { dataScope, isTestCreator, scoped } from "./data-scope.js";
 
-export const IMPORT_MAX_ROWS = 1000;
+export const IMPORT_MAX_ROWS = 500;
 export const BATCH_MAX_USERS = 500;
 
 export type ImportRow = { row: number; email: string; displayName: string; role: "TEACHER" | "STUDENT"; password: string };
@@ -188,6 +188,10 @@ export class AccountController {
     for (const userId of [...new Set(userIds)]) {
       // 逐用户独立行锁与提交标识：部分失败可重试，已成功用户幂等跳过
       const perKey = `${requestKey}-${userId}`;
+      if (perKey.length > 100) {
+        results.push({ userId, ok: false, error: "提交标识过长，请刷新后重试" });
+        continue;
+      }
       try {
         const entry = await this.adjustPoints(request, userId, mode, points, reason, perKey);
         results.push({ userId, ok: true, balanceAfter: entry.balanceAfter });
@@ -220,7 +224,7 @@ export class AccountController {
   }
 
   @Post("import")
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 5_000_000 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 4_000_000 } }))
   async importUsers(@Req() request: UserRequest, @UploadedFile() file: Express.Multer.File | undefined) {
     this.admin(request);
     if (!file?.buffer) throw new BadRequestException("请选择 Excel 文件（.xlsx）");
