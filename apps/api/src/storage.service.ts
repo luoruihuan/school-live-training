@@ -26,6 +26,29 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly prisma: PrismaService, private readonly alert: AlertService) {}
 
+  /**
+   * 回放长期层双后端：配置 COS_* 后回放走腾讯 COS（同地域内网免流量费），
+   * 未配置则回退 MinIO（兼容历史部署与回滚：清空 COS_* 环境变量即切回）。
+   * 商品图始终走 MinIO（量小，留在服务器本地）。
+   */
+  private cosConfigured(): boolean {
+    return Boolean(process.env.COS_ENDPOINT && process.env.COS_SECRET_ID && process.env.COS_SECRET_KEY && process.env.COS_RECORDINGS_BUCKET);
+  }
+
+  private recordingsClient(): S3Client {
+    if (!this.cosConfigured()) return this.client();
+    return new S3Client({
+      endpoint: process.env.COS_ENDPOINT,
+      region: process.env.COS_REGION || "ap-tokyo",
+      credentials: { accessKeyId: process.env.COS_SECRET_ID!, secretAccessKey: process.env.COS_SECRET_KEY! },
+      forcePathStyle: false
+    });
+  }
+
+  private get recordingsBucket(): string {
+    return this.cosConfigured() ? process.env.COS_RECORDINGS_BUCKET! : this.buckets.recordings;
+  }
+
   private client(): S3Client {
     const endpoint = process.env.MINIO_ENDPOINT;
     const accessKeyId = process.env.MINIO_ROOT_USER;
@@ -37,6 +60,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
+    // 仅初始化 MinIO 侧桶（商品图 + 回退用 recordings）；COS 回放桶为人工创建，跳过自动建桶
     const s3 = this.client();
     for (const bucket of Object.values(this.buckets)) {
       try {
@@ -45,9 +69,10 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         const name = (error as { name?: string }).name;
         if (name === "BucketAlreadyOwnedByYou" || name === "BucketAlreadyExists") this.logger.log(`存储桶就绪：${bucket}`);
-        else this.logger.error(`存储桶 ${bucket} 初始化失败：${String(error)}`);
+        else this.logger.error(`存储桶 ${bucket} 初始��失败：${String(error)}`);
       }
     }
+    if (this.cosConfigured()) this.logger.log(`回放长期存储已切换到 COS：${this.recordingsBucket}（${process.env.COS_ENDPOINT}）`);
     this.cleanupTimer = setInterval(() => { void this.cleanup(); }, CLEANUP_INTERVAL_MS);
     this.cleanupTimer.unref();
   }
@@ -64,8 +89,8 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async uploadRecordingFile(key: string, filePath: string, sizeBytes: number): Promise<void> {
-    await this.client().send(new PutObjectCommand({
-      Bucket: this.buckets.recordings, Key: key,
+    await this.recordingsClient().send(new PutObjectCommand({
+      Bucket: this.recordingsBucket, Key: key,
       Body: createReadStream(filePath), ContentType: "video/mp4", ContentLength: sizeBytes
     }));
   }
@@ -89,8 +114,8 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getRecordingStream(key: string, range?: { start: number; end: number }): Promise<{ stream: Readable; contentType: string; contentLength: number }> {
-    const result = await this.client().send(new GetObjectCommand({
-      Bucket: this.buckets.recordings, Key: key,
+    const result = await this.recordingsClient().send(new GetObjectCommand({
+      Bucket: this.recordingsBucket, Key: key,
       ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {})
     }));
     if (!result.Body) throw new ServiceUnavailableException("回放对象不存在");
@@ -102,14 +127,14 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async headRecordingSize(key: string): Promise<number> {
-    const result = await this.client().send(new HeadObjectCommand({ Bucket: this.buckets.recordings, Key: key }));
+    const result = await this.recordingsClient().send(new HeadObjectCommand({ Bucket: this.recordingsBucket, Key: key }));
     const length = Number(result.ContentLength ?? 0);
     if (!Number.isSafeInteger(length) || length <= 0) throw new ServiceUnavailableException("回放对象不可读");
     return length;
   }
 
   async deleteRecording(key: string): Promise<void> {
-    await this.client().send(new DeleteObjectCommand({ Bucket: this.buckets.recordings, Key: key }));
+    await this.recordingsClient().send(new DeleteObjectCommand({ Bucket: this.recordingsBucket, Key: key }));
   }
 
   async localRecordingSize(filePath: string): Promise<number> {
