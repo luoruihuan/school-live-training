@@ -59,6 +59,16 @@ test("账号导入：角色写非法值报错，英文角色名兼容", () => {
   assert.match(issues[0].reason, /学生|教师/);
 });
 
+test("账号导入：模板自带的示例行自动跳过，不创建账号", () => {
+  const { parsed, issues } = parseImportRows([
+    ["20260001", "张三", "学生", "zs123456"],   // 模板示例行
+    ["stu700", "", "", ""]                        // 正常行
+  ]);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].email, "stu700");
+  assert.equal(issues.length, 0);
+});
+
 test("账号导入：数字单元格（学号为数字）按字符串处理", () => {
   const { parsed, issues } = parseImportRows([[20260101, "王五", "", ""]]);
   assert.equal(issues.length, 0);
