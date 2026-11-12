@@ -113,7 +113,19 @@ model Product {
   rooms       RoomProduct[]
   cartItems   CartItem[]
   orderItems  OrderItem[]
+  detailImages ProductDetailImage[]
   @@index([storeId])
+}
+
+model ProductDetailImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  imageKey  String   @db.VarChar(200)
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([productId, position])
 }
 
 model RoomProduct {

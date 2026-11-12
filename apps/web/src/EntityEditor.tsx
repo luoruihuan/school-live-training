@@ -2,17 +2,33 @@ import { useState } from "react";
 import { Button, DatePicker, Form, Input, InputNumber, Modal, Select, Upload } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 import type { Dayjs } from "dayjs";
-import { patch, post, uploadImage, type ManagedUser, type Product, type Room, type Store } from "./api";
+import type { UploadFile } from "antd";
+import { detailImageUrl, patch, post, uploadImage, type ManagedUser, type Product, type Room, type Store } from "./api";
 import type { Platform } from "./usePlatform";
 
 export type EditorKind = "store" | "room" | "product" | "coupon" | "user" | "password";
 type Values = { name?: string; description?: string; storeId?: string; roomId?: string; title?: string; status?: string; pointsPrice?: number; pickupPoint?: string; pointsDiscount?: number; expiresAt?: Dayjs; displayName?: string; email?: string; role?: string; password?: string };
+const MAX_DETAIL_IMAGES = 9;
 export function EntityEditor({ kind, entity, roomId, data, close, saved }: {
   kind: EditorKind; entity?: Store | Room | Product | ManagedUser; roomId?: string; data: Platform; close: () => void; saved?: () => void;
 }) {
   const [file, setFile] = useState<File>();
+  // 商品介绍图（详情图）：保留的旧 key + 新选文件；touched 标记是否发生过增删（决定是否整组提交）
+  const product = entity && "pointsPrice" in entity ? entity as Product : undefined;
+  const [detailKeys, setDetailKeys] = useState<string[]>(product?.detailImageKeys ?? []);
+  const [detailFiles, setDetailFiles] = useState<File[]>([]);
+  const [detailTouched, setDetailTouched] = useState(false);
   const label = { store: "店铺", room: "直播间", product: "商品", coupon: "优惠券", user: "教学账号", password: "密码" }[kind];
   const initial = { role: "STUDENT", status: "DRAFT", ...entity, ...(roomId ? { roomId, storeId: data.rooms.find((room) => room.id === roomId)?.storeId } : {}) };
+  const detailList: UploadFile[] = [
+    ...detailKeys.map((key, index): UploadFile => ({ uid: key, name: `介绍图 ${index + 1}`, status: "done", url: product ? detailImageUrl(product.id, index) : undefined })),
+    ...detailFiles.map((item): UploadFile => ({ uid: `${item.name}:${item.size}`, name: item.name, status: "uploading" }))
+  ];
+  function removeDetail(uploadFile: UploadFile): void {
+    setDetailTouched(true);
+    setDetailKeys((keys) => keys.filter((key) => key !== uploadFile.uid));
+    setDetailFiles((files) => files.filter((item) => `${item.name}:${item.size}` !== uploadFile.uid));
+  }
   async function submit(values: Values) {
     const ok = await data.run(async () => {
       let path = "";
@@ -20,7 +36,11 @@ export function EntityEditor({ kind, entity, roomId, data, close, saved }: {
       switch (kind) {
         case "store": path = "/stores"; body = { name: values.name, description: values.description ?? "" }; break;
         case "room": path = "/rooms"; body = { title: values.title, ...(entity ? values.status === (entity as Room).status ? {} : { status: values.status } : { storeId: values.storeId }) }; break;
-        case "product": path = "/products"; body = { storeId: values.storeId, name: values.name, description: values.description ?? "", pointsPrice: values.pointsPrice, pickupPoint: values.pickupPoint, ...(file ? { imageKey: await uploadImage(file) } : {}) }; break;
+        case "product": {
+          const uploadedKeys: string[] = [];
+          for (const item of detailFiles) uploadedKeys.push(await uploadImage(item));
+          path = "/products"; body = { storeId: values.storeId, name: values.name, description: values.description ?? "", pointsPrice: values.pointsPrice, pickupPoint: values.pickupPoint, ...(file ? { imageKey: await uploadImage(file) } : {}), ...(detailFiles.length || detailTouched ? { detailImages: [...detailKeys, ...uploadedKeys] } : {}) }; break;
+        }
         case "coupon": path = "/coupons"; body = { storeId: values.storeId, roomId: values.roomId, name: values.name, pointsDiscount: values.pointsDiscount, expiresAt: `${values.expiresAt!.format("YYYY-MM-DD")}T23:59:59+08:00` }; break;
         case "user": path = "/users"; body = { ...(values.displayName ? { displayName: values.displayName } : {}), email: values.email, role: values.role, password: values.password }; break;
         case "password": await post(`/users/${entity!.id}/password`, { password: values.password }); return;
@@ -36,7 +56,7 @@ export function EntityEditor({ kind, entity, roomId, data, close, saved }: {
       {["store", "product", "coupon"].includes(kind) && <Form.Item name="name" label={`${label}名称`} rules={required}><Input maxLength={kind === "product" ? 100 : 80} /></Form.Item>}
       {["store", "product"].includes(kind) && <Form.Item name="description" label="简介"><Input.TextArea rows={3} maxLength={1000} showCount /></Form.Item>}
       {kind === "room" && <><Form.Item name="title" label="课堂标题" rules={required}><Input maxLength={100} /></Form.Item>{entity && <Form.Item name="status" label="课堂显示状态" extra="“直播中”由 OBS 推流自动更新。直播中请先停止 OBS，结束后再修改状态。"><Select disabled={(entity as Room).status === "LIVE"} options={[{ value: "DRAFT", label: "准备中" }, { value: "READY", label: "待开播" }, { value: "LIVE", label: "直播中（自动）", disabled: true }, { value: "ENDED", label: "标记已结束" }]} /></Form.Item>}</>}
-      {kind === "product" && <><Form.Item name="pointsPrice" label="兑换所需积分" rules={required}><InputNumber min={1} max={1_000_000} precision={0} className="full-width" /></Form.Item><Form.Item name="pickupPoint" label="自提点" rules={required} extra="学生选择自提后，订单中会显示这里填写的地点。"><Input maxLength={200} /></Form.Item><Form.Item label="商品图片" extra="JPG / PNG / WebP，最大 3 MB；编辑时不选择图片将保留原图。"><Upload accept="image/jpeg,image/png,image/webp" maxCount={1} beforeUpload={(next) => { if (next.size > 3_000_000) { void data.run(async () => { throw new Error("图片不能超过 3 MB"); }); return Upload.LIST_IGNORE; } setFile(next); return false; }} onRemove={() => setFile(undefined)}><Button icon={<UploadOutlined />}>选择图片</Button></Upload></Form.Item></>}
+      {kind === "product" && <><Form.Item name="pointsPrice" label="兑换所需积分" rules={required}><InputNumber min={1} max={1_000_000} precision={0} className="full-width" /></Form.Item><Form.Item name="pickupPoint" label="自提点" rules={required} extra="学生选择自提后，订单中会显示这里填写的地点。"><Input maxLength={200} /></Form.Item><Form.Item label="商品图片（主图）" extra="JPG / PNG / WebP，最大 3 MB；编辑时不选择图片将保留原图。"><Upload accept="image/jpeg,image/png,image/webp" maxCount={1} beforeUpload={(next) => { if (next.size > 3_000_000) { void data.run(async () => { throw new Error("图片不能超过 3 MB"); }); return Upload.LIST_IGNORE; } setFile(next); return false; }} onRemove={() => setFile(undefined)}><Button icon={<UploadOutlined />}>选择图片</Button></Upload></Form.Item><Form.Item label={`商品介绍图（${detailList.length}/${MAX_DETAIL_IMAGES} 张）`} extra="展示在商品详情弹层中，按添加顺序排列；编辑时可删除已有图片或继续追加，保存后生效。单张最大 3 MB。"><Upload accept="image/jpeg,image/png,image/webp" multiple listType="picture-card" fileList={detailList} onRemove={removeDetail} beforeUpload={(next) => { if (detailList.length >= MAX_DETAIL_IMAGES) { void data.run(async () => { throw new Error(`介绍图最多 ${MAX_DETAIL_IMAGES} 张`); }); return Upload.LIST_IGNORE; } if (next.size > 3_000_000) { void data.run(async () => { throw new Error("图片不能超过 3 MB"); }); return Upload.LIST_IGNORE; } setDetailTouched(true); setDetailFiles((files) => [...files, next]); return false; }}>{detailList.length < MAX_DETAIL_IMAGES && <Button size="small" icon={<UploadOutlined />}>添加介绍图</Button>}</Upload></Form.Item></>}
       {kind === "coupon" && <><Form.Item name="roomId" label="适用直播间" rules={required}><Select placeholder="选择直播间" options={data.rooms.map((room) => ({ value: room.id, label: `${room.store.name} / ${room.title}` }))} /></Form.Item><Form.Item name="pointsDiscount" label="抵扣积分" rules={required}><InputNumber min={1} max={1_000_000} precision={0} className="full-width" /></Form.Item><Form.Item name="expiresAt" label="到期日期（北京时间）" rules={required}><DatePicker className="full-width" /></Form.Item></>}
       {kind === "user" && <><Form.Item name="displayName" label="姓名（选填）" extra="不填写时默认使用账号作为姓名。"><Input maxLength={80} /></Form.Item><Form.Item name="email" label="登录账号" rules={[...required, { pattern: /^[a-zA-Z0-9._@-]{2,100}$/, message: "仅支持字母、数字、点、下划线、@、中划线" }]}><Input maxLength={100} autoComplete="off" placeholder="学号 / 工号 / 邮箱" /></Form.Item><Form.Item name="role" label="角色" rules={required}><Select options={[{ value: "STUDENT", label: "学生" }, { value: "TEACHER", label: "教师" }]} /></Form.Item></>}
       {["user", "password"].includes(kind) && <Form.Item name="password" initialValue={kind === "user" ? "123456" : undefined} label={kind === "password" ? "新密码" : "初始密码"} rules={[...required, { min: 6, message: "至少 6 位" }]} extra="默认初始密码 123456；账号首次登录或重置后必须修改密码。"><Input.Password minLength={6} maxLength={200} autoComplete="new-password" /></Form.Item>}

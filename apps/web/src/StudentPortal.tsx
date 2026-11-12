@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Alert, App, Avatar, Badge, Button, Card, Drawer, Input, InputNumber, Pagination, Popconfirm, Segmented, Select, Space, Spin, Tag, Typography } from "antd";
+import { Alert, App, Avatar, Badge, Button, Card, Drawer, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Spin, Tag, Typography } from "antd";
 import { ArrowLeftOutlined, ArrowRightOutlined, HistoryOutlined, LogoutOutlined, PlayCircleOutlined, PlaySquareFilled, ProfileOutlined, ReloadOutlined, ShareAltOutlined, ShoppingCartOutlined } from "@ant-design/icons";
-import { api, ApiError, pointText, patch, post, type Product, type User } from "./api";
+import { io } from "socket.io-client";
+import { api, ApiError, detailImageUrl, pointText, patch, post, type Product, type User } from "./api";
 import { usePlatform } from "./usePlatform";
 import { NoData, PageTitle, ProductImage, RoomStatus } from "./ui";
 import { Chat } from "./Chat";
@@ -41,6 +42,7 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
   const [couponId, setCouponId] = useState<string>();
   const [fulfillmentMethod, setFulfillmentMethod] = useState<"PICKUP" | "DELIVERY">("PICKUP");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const requestKey = useRef<string | null>(null);
   const room = data.rooms.find((r) => r.id === roomId);
   const cartCount = data.cart.reduce((n, item) => n + item.quantity, 0);
@@ -81,6 +83,21 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
     return () => { active = false; };
   }, [roomId, data.products]);
 
+  // 实时上/下链接：订阅本场商品变化，教师/管理员绑定或解绑商品时自动刷新小黄车
+  useEffect(() => {
+    if (!roomId || tab !== "rooms") return;
+    const connection = io({ transports: ["websocket"] });
+    connection.on("connect", () => { connection.timeout(8000).emit("join-room", roomId, () => undefined); });
+    connection.on("room-products", (event: { roomId: string; action: "bound" | "unbound"; product: { id: string; name: string; pointsPrice: number; isActive: boolean } }) => {
+      if (event.roomId !== roomId) return;
+      api<Product[]>(`/rooms/${roomId}/products`).then((items) => setRoomProducts(items.filter((p) => p.isActive)))
+        .catch(() => undefined); // 拉取失败不提示，下次事件或手动刷新会同步
+      if (event.action === "bound") void message.info(`新上架：${event.product.name}（${pointText(event.product.pointsPrice)}），点击“本场商品”查看`);
+      else void message.info(`商品已移出本场：${event.product.name}`);
+    });
+    return () => { connection.disconnect(); };
+  }, [roomId, tab, message]);
+
   async function checkout() {
     if (fulfillmentMethod === "DELIVERY" && !deliveryAddress.trim()) { void message.error("请填写送货地点"); return; }
     requestKey.current ??= crypto.randomUUID();
@@ -102,7 +119,7 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
   }
   function products() {
     return <div className="shop-products">{roomProducts.map((p) => <Card size="small" key={p.id} className="shop-product">
-      <ProductImage product={p} /><div className="shop-product__body"><h3>{p.name}</h3><p className="muted">{p.description || "课堂实训商品"}</p><p className="muted small">可选择自提或送货</p><div className="split"><strong className="price">{pointText(p.pointsPrice)}</strong><Button type="primary" size="small" icon={<ShoppingCartOutlined />} disabled={data.busy} onClick={() => void changeCart(() => post("/cart", { productId: p.id }), "已加入已选商品")}>加入</Button></div></div>
+      <ProductImage product={p} /><div className="shop-product__body"><h3>{p.name}</h3><p className="muted">{p.description || "课堂实训商品"}</p><p className="muted small">可选择自提或送货</p><div className="split"><strong className="price">{pointText(p.pointsPrice)}</strong><Space size={4}><Button size="small" onClick={() => setDetailProduct(p)}>详情</Button><Button type="primary" size="small" icon={<ShoppingCartOutlined />} disabled={data.busy} onClick={() => void changeCart(() => post("/cart", { productId: p.id }), "已加入已选商品")}>加入</Button></Space></div></div>
     </Card>)}{!roomProducts.length && <NoData text="本场暂无商品" />}</div>;
   }
   function roomCoupons() {
@@ -160,5 +177,15 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
       <div className="shop-drawer-footer"><span>已选 {cartCount} 件 · {pointText(subtotal)}</span><Button type="primary" disabled={!data.cart.length} onClick={() => { setDrawer(false); setCheckoutOpen(true); }}>去兑换</Button></div>
     </Drawer>
     <Drawer title="确认积分兑换" open={checkoutOpen} onClose={() => setCheckoutOpen(false)} placement="right" size="min(460px, 100vw)">{checkoutForm()}</Drawer>
+    <Modal title={detailProduct ? `商品详情 · ${detailProduct.name}` : "商品详情"} open={!!detailProduct} onCancel={() => setDetailProduct(null)} footer={<Button type="primary" onClick={() => setDetailProduct(null)}>关闭</Button>} width={480}>
+      {detailProduct && <div className="product-detail">
+        <ProductImage product={detailProduct} />
+        <h3>{detailProduct.name}</h3>
+        <div className="split"><span className="muted">兑换积分</span><strong className="price">{pointText(detailProduct.pointsPrice)}</strong></div>
+        <div className="split spaced-top"><span className="muted">自提点</span><span>{detailProduct.pickupPoint}</span></div>
+        {detailProduct.description && <p className="spaced-top">{detailProduct.description}</p>}
+        {(detailProduct.detailImageKeys?.length ?? 0) > 0 && <div className="product-detail__images spaced-top">{detailProduct.detailImageKeys!.map((_, index) => <img key={index} src={detailImageUrl(detailProduct.id, index)} alt={`${detailProduct.name} 介绍图 ${index + 1}`} loading="lazy" />)}</div>}
+      </div>}
+    </Modal>
   </div>;
 }

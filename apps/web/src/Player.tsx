@@ -13,6 +13,9 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
   const [error, setError] = useState("");
   const [idleStatus, setIdleStatus] = useState<Playback["status"] | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // 画面比例自适应：推流端无论横屏（16:9）还是竖屏（9:16）都按实际视频尺寸展示，
+  // 高度由 CSS max-height 限制，画面 object-fit: contain 居中不裁切。
+  const [aspectRatio, setAspectRatio] = useState("16 / 9");
 
   useEffect(() => {
     const video = videoRef.current;
@@ -38,7 +41,7 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
         const { default: Hls } = await import("hls.js");
         if (cancelled) return;
         if (Hls.isSupported()) {
-          hlsPlayer = new Hls({ liveSyncDurationCount: 3 });
+          hlsPlayer = new Hls({ liveSyncDurationCount: 2 });
           hlsPlayer.on(Hls.Events.ERROR, (_event, data) => {
             if (data.fatal && !cancelled) setError("直播暂时不可用，教师可能尚未开播或网络已中断，请稍后重试。");
           });
@@ -80,7 +83,7 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
   }, [roomId, attempt, mock]);
 
   return <div className="player">
-    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} onStalled={() => { if (!mock && !error) setError("直播信号中断，正在等待画面恢复…"); }} />
+    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} style={{ aspectRatio }} onLoadedMetadata={(event) => { const target = event.currentTarget; if (target.videoWidth && target.videoHeight) setAspectRatio(`${target.videoWidth} / ${target.videoHeight}`); }} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} onStalled={() => { if (!mock && !error) setError("直播信号中断，正在等待画面恢复…"); }} />
     {idleStatus && !mock && !error && <div className="player__idle" aria-live="polite">
       <span className="player__idle-badge">{idleStatus === "ENDED" ? "已结束" : "未开播"}</span>
       {idleStatus === "ENDED" ? <PauseCircleOutlined className="player__idle-icon" /> : <VideoCameraOutlined className="player__idle-icon" />}

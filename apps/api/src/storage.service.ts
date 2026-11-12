@@ -79,6 +79,15 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** 删除图片对象；失败仅记日志不阻塞业务（孤儿对象由 MinIO 生命周期策略另行兜底）。 */
+  async deleteImage(key: string): Promise<void> {
+    try {
+      await this.client().send(new DeleteObjectCommand({ Bucket: this.buckets.images, Key: key }));
+    } catch (error) {
+      this.logger.warn(`删除图片对象失败 ${key}：${String(error)}`);
+    }
+  }
+
   async getRecordingStream(key: string, range?: { start: number; end: number }): Promise<{ stream: Readable; contentType: string; contentLength: number }> {
     const result = await this.client().send(new GetObjectCommand({
       Bucket: this.buckets.recordings, Key: key,
@@ -152,7 +161,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       if (usage === null || usage < high) return;
       const oldestAllowed = new Date(Date.now() - minKeepDays * 24 * 60 * 60 * 1000);
       this.logger.warn(`磁盘使用率 ${usage}% ≥ ${high}%，开始提前清理 ${minKeepDays} 天前的最旧回放`);
-      await this.alert.send(`【校园直播·清理】磁盘使用率 ${usage}% 触及高水位（${high}%），开始自动删除 ${minKeepDays} 天前的最旧回放。`);
+      await this.alert.send(`[cleanup start] Disk usage ${usage}% >= high watermark ${high}%, deleting replays older than ${minKeepDays} days.`);
       const skipped = new Set<string>();
       let removed = 0;
       while (usage !== null && usage >= low && removed < 200) {
@@ -174,7 +183,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
         usage = await this.diskUsagePercent();
       }
       this.logger.log(`水位清理完成：提前删除 ${removed} 条（最小保留 ${minKeepDays} 天，当前磁盘 ${usage ?? "未知"}%）`);
-      await this.alert.send(`【校园直播·清理完成】水位清理结束：删除 ${removed} 条最旧回放，当前磁盘 ${usage ?? "未知"}%。`);
+      await this.alert.send(`[cleanup done] Removed ${removed} oldest replays, disk now ${usage ?? "unknown"}%.`);
     } catch (error) {
       this.logger.error(`磁盘水位清理失败：${String(error)}`);
     }

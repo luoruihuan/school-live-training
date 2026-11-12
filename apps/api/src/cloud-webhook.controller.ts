@@ -66,8 +66,8 @@ export class CloudWebhookController {
         detail: `课堂「${room.title}」${action === "on_publish" ? "开始直播" : `结束直播${room.lastPublishAt ? `（时长约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}`}`
       });
       await this.alert.send(action === "on_publish"
-        ? `【校园直播·开播】课堂「${room.title}」已开始直播。`
-        : `【校园直播·停播】课堂「${room.title}」已停止推流${room.lastPublishAt ? `（本场约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}。若非正常下播，请检查教师端网络与 OBS。`);
+        ? `[live start] Course "${room.title}" started streaming.`
+        : `[live end] Course "${room.title}" stopped streaming${room.lastPublishAt ? ` (about ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} min)` : ""}. If not a normal shutdown, check teacher network / OBS.`);
       return 0;
     }
 
