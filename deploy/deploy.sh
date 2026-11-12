@@ -68,10 +68,11 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   web_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' live-training-web-1 2>/dev/null || echo none)"
   if [ "$api_status" = "healthy" ] && [ "$web_status" = "healthy" ]; then
     echo "  api: healthy / web: healthy"
-    # 保留 2G 热缓存平衡发布速度；用完即删一次性初始化镜像（下次发布自动重建）
-    # 注：build 刚结束时 BuildKit 缓存引用可能尚未释放，立即 prune 会空转回收 0（2026-11-12 实测），
-    # 改为延迟 3 分钟后台执行，结果落盘便于事后核对。
-    ( sleep 180 && docker builder prune -af --keep-storage 2g && printf '[%s] builder prune done\n' "$(date '+%F %T')" ) >> "$HOME/deploy-prune.log" 2>&1 &
+    # 构建缓存保留 8G（磁盘宽裕时加速发布；仅超出部分清理最旧缓存，防止无上限增长。
+    # 回放长期层已在 COS，本地盘压力解除；如磁盘再度紧张可调低此值）
+    # 注：build 刚结束时 BuildKit 缓存引用可能尚未释放，立即 prune 会空转，故延迟 3 分钟后台执行，
+    # 结果落盘 /root/deploy-prune.log 便于事后核对。
+    ( sleep 180 && docker builder prune -af --keep-storage 8g && printf '[%s] builder prune done\n' "$(date '+%F %T')" ) >> "$HOME/deploy-prune.log" 2>&1 &
     docker image prune -f > /dev/null 2>&1 || true
     "${COMPOSE[@]}" rm -sf initialize > /dev/null 2>&1 || true
     docker image rm live-training-initialize:latest > /dev/null 2>&1 || true
