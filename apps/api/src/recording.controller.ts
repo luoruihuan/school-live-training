@@ -45,7 +45,11 @@ export class RecordingController {
       await this.prisma.recording.update({ where: { id }, data: { playCount: { increment: 1 } } }).catch(() => undefined);
       await this.audit.log({ action: "REPLAY_PLAYED", userId: request.currentUser.id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 观看回放（课堂 ${recording.roomId.slice(-6).toUpperCase()}）` });
     }
-    return { url: `/api/recordings/${recording.id}/file`, expiresInSeconds: Math.max(1, Math.floor((recording.expiresAt.getTime() - Date.now()) / 1000)) };
+    const remaining = Math.max(1, Math.floor((recording.expiresAt.getTime() - Date.now()) / 1000));
+    // 配置了回放 CDN 域名时直连 CDN（服务器不再代理视频流）；未配置时回退 API 代理。
+    const cdn = recording.objectKey?.endsWith(".mp4") ? this.storage.recordingPlaybackUrl(recording.objectKey) : null;
+    if (cdn) return { url: cdn.url, expiresInSeconds: Math.min(remaining, cdn.expiresInSeconds) };
+    return { url: `/api/recordings/${recording.id}/file`, expiresInSeconds: remaining };
   }
 
   @Get("recordings/:id/file")
