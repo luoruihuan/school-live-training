@@ -79,7 +79,7 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
     const ledger = await accounts.pointHistory(admin, student.id, {});
     assert.equal(ledger.items[0]!.balanceAfter, 300);
     assert.equal(ledger.items[1]!.delta, -50);
-    assert.throws(() => accounts.pointHistory(teacher, student.id, {}), /仅管理员/);
+    await assert.rejects(accounts.pointHistory(teacher, student.id, {}), /仅管理员/);
   });
 
   await t.test("数量修改和上下限", async () => {
