@@ -5,7 +5,7 @@ import { stat, statfs } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaService } from "./prisma.service.js";
-import { recordingRetentionDays } from "./cloud-config.js";
+import { recordingRetentionDays, replayCdnDomain, cdnUrlAuthKey, cdnTypeAUrl } from "./cloud-config.js";
 import { AlertService } from "./alert.service.js";
 
 export type ImageMime = "image/jpeg" | "image/png" | "image/webp";
@@ -139,6 +139,20 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     const length = Number(result.ContentLength ?? 0);
     if (!Number.isSafeInteger(length) || length <= 0) throw new ServiceUnavailableException("回放对象不可读");
     return length;
+  }
+
+  /** 回放 CDN 直连地址：未配置 REPLAY_CDN_DOMAIN 返回 null（回放继续走 API 代理 /file）；
+   *  配置后返回带 TypeA 防盗链签名的 CDN URL（需在 CDN 控制台用同一主密钥开 TypeA 鉴权）。
+   *  URL 有效期以控制台配置为准，此处按约定返回 6 小时提示值。 */
+  recordingPlaybackUrl(key: string): { url: string; expiresInSeconds: number } | null {
+    const domain = replayCdnDomain();
+    if (!domain) return null;
+    const uri = `/${key.replace(/^\/+/, "")}`;
+    const authKey = cdnUrlAuthKey();
+    const url = authKey
+      ? cdnTypeAUrl(domain, uri, authKey, Math.floor(Date.now() / 1000), "0")
+      : `https://${domain}${uri}`;
+    return { url, expiresInSeconds: 6 * 60 * 60 };
   }
 
   async deleteRecording(key: string): Promise<void> {

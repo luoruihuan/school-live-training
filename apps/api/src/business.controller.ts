@@ -13,6 +13,7 @@ import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
 import { dataScope, isTestCreator, sameSideCreate, scoped, assertSameSide } from "./data-scope.js";
 import { publishToken } from "./cloud-webhook.controller.js";
+import { cdnLiveDomain } from "./cloud-config.js";
 import { ChatGateway } from "./chat.gateway.js";
 
 const DETAIL_IMAGE_KEY_PATTERN = /^product-images\/[a-f0-9]{32}\.(jpg|png|webp)$/;
@@ -182,11 +183,13 @@ export class BusinessController {
   @Get("rooms/:id/playback")
   async playbackAddress(@Param("id") id: string, @Req() request: UserRequest) {
     const room = await this.room(id, request);
-    const domain = liveDomain();
+    const domain = liveDomain(); // APP_DOMAIN 必须配置（CDN 回源也指向它）
+    // 配置了直播 CDN 域名时观众从 CDN 边缘拉流，服务器只出回源路数；未配置时直连源站。
+    const host = cdnLiveDomain() ?? domain;
     return {
       status: room.status,
-      flv: `https://${domain}/live/${room.streamName}.flv`,
-      hls: `https://${domain}/live/${room.streamName}.m3u8`,
+      flv: `https://${host}/live/${room.streamName}.flv`,
+      hls: `https://${host}/live/${room.streamName}.m3u8`,
       expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
     };
   }
