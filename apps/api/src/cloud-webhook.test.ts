@@ -71,6 +71,7 @@ test("SRS 录制回调：入库幂等，非法路径拒绝，SRS 容器路径映
   const fileName = "stream1-1698400000.mp4";
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
   await controller.srs({ action: "on_dvr", stream: "stream1", file: `/data/recordings/${fileName}` });
+  await controller.dvrIdle(); // 回调立即返回，入库在后台完成
   assert.equal(rows.size, 1);
   const row = [...rows.values()][0]!;
   assert.equal(row.objectKey, `recordings/room1/${fileName}`);

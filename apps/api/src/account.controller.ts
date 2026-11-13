@@ -3,7 +3,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import ExcelJS from "exceljs";
 import { AuthGuard, type UserRequest } from "./auth.guard.js";
-import { hashPassword } from "./auth.service.js";
+import { hashPassword, AuthService } from "./auth.service.js";
 import { integerField, object, optionalString, stringField } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { ChatGateway } from "./chat.gateway.js";
@@ -74,7 +74,7 @@ function cellText(cell: ExcelJS.CellValue): string {
 @Controller("users")
 @UseGuards(AuthGuard)
 export class AccountController {
-  constructor(private readonly prisma: PrismaService, private readonly chat: ChatGateway, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly chat: ChatGateway, private readonly audit: AuditService, private readonly auth: AuthService) {}
 
   private admin(request: UserRequest) {
     if (!isAdminRole(request.currentUser.role)) throw new ForbiddenException("仅管理员可管理账号");
@@ -107,12 +107,14 @@ export class AccountController {
         throw new BadRequestException("此入口仅管理教师和学生账号");
       }
       await tx.user.update({ where: { id }, data: { isActive } });
+      const revoked = await tx.session.findMany({ where: { userId: id }, select: { tokenHash: true } });
       await tx.session.deleteMany({ where: { userId: id } });
-      return { ok: true };
+      return revoked;
     });
     this.chat.disconnectUser(id);
+    for (const session of result) this.auth.revokedSessions.emit("revoked", session.tokenHash);
     await this.audit.log({ action: isActive ? "USER_ENABLED" : "USER_DISABLED", userId: id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} ${isActive ? "启用" : "停用"}了账号 ${id.slice(-8).toUpperCase()}` });
-    return result;
+    return { ok: true };
   }
 
   @Post(":id/password")
@@ -131,12 +133,14 @@ export class AccountController {
         throw new BadRequestException("此入口仅管理教师和学生账号");
       }
       await tx.user.update({ where: { id }, data: { passwordHash, mustChangePassword: true } });
+      const revoked = await tx.session.findMany({ where: { userId: id }, select: { tokenHash: true } });
       await tx.session.deleteMany({ where: { userId: id } });
-      return { ok: true };
+      return revoked;
     });
     this.chat.disconnectUser(id);
+    for (const session of result) this.auth.revokedSessions.emit("revoked", session.tokenHash);
     await this.audit.log({ action: "PASSWORD_RESET", userId: id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 重置了账号 ${id.slice(-8).toUpperCase()} 的密码` });
-    return result;
+    return { ok: true };
   }
 
   /** 单人/批量共用的积分调整核心：幂等 + 行锁 + 余额校验 + 流水。返回调整后余额。 */
@@ -257,17 +261,33 @@ export class AccountController {
     const failed: ImportIssue[] = [...issues];
     const created: string[] = [];
     const side = isTestCreator(request.currentUser);
-    for (const item of parsed) {
+    // 批量查重 + 并行 hash + 批量插入：避免逐行串行往返（500 行原本要 1000 次查询 + 50 秒串行 scrypt）。
+    const existing = await this.prisma.user.findMany({
+      where: { email: { in: parsed.map((item) => item.email) } }, select: { email: true }
+    });
+    const existingSet = new Set(existing.map((row) => row.email));
+    const pending = parsed.filter((item) => {
+      if (existingSet.has(item.email)) {
+        failed.push({ row: item.row, email: item.email, reason: "该账号已存在" });
+        return false;
+      }
+      return true;
+    });
+    if (pending.length) {
+      const rowsToInsert: { email: string; displayName: string; passwordHash: string; role: "TEACHER" | "STUDENT"; isTest: boolean }[] = [];
+      for (let index = 0; index < pending.length; index += 25) {
+        const batch = pending.slice(index, index + 25);
+        const hashes = await Promise.all(batch.map((item) => hashPassword(item.password)));
+        batch.forEach((item, offset) => rowsToInsert.push({
+          email: item.email, displayName: item.displayName, passwordHash: hashes[offset]!, role: item.role, isTest: side
+        }));
+      }
       try {
-        const exists = await this.prisma.user.findUnique({ where: { email: item.email }, select: { id: true } });
-        if (exists) { failed.push({ row: item.row, email: item.email, reason: "该账号已存在" }); continue; }
-        await this.prisma.user.create({
-          data: { email: item.email, displayName: item.displayName, passwordHash: await hashPassword(item.password), role: item.role, isTest: side, mustChangePassword: true },
-          select: { id: true }
-        });
-        created.push(item.email);
+        await this.prisma.user.createMany({ data: rowsToInsert.map((row) => ({ ...row, mustChangePassword: true })) });
+        created.push(...rowsToInsert.map((row) => row.email));
       } catch {
-        failed.push({ row: item.row, email: item.email, reason: "创建失败（该账号可能刚被其他管理员创建）" });
+        // 极小概率：查重后、插入前被其他管理员并发创建（createMany 原子回滚），提示重试即可
+        failed.push({ row: 0, email: "", reason: "部分账号刚被其他管理员创建，请重新上传，已存在的会自动跳过" });
       }
     }
     await this.audit.log({ action: "USER_CREATED", actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 批量导入 ${created.length} 个账号（失败 ${failed.length} 个）` });

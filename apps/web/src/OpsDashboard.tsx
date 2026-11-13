@@ -18,7 +18,7 @@ type LogsPage = { items: AuditRow[]; total: number; page: number; pageSize: numb
 const actionText: Record<string, string> = {
   LOGIN: "登录成功", LOGIN_FAILED: "登录失败", LOGOUT: "退出登录", PASSWORD_CHANGED: "修改密码", PASSWORD_RESET: "重置密码",
   USER_CREATED: "创建账号", USER_DISABLED: "停用账号", USER_ENABLED: "启用账号", POINTS_ADJUST: "积分调整",
-  PUBLISH_START: "开始直播", PUBLISH_STOP: "结束直播", RECORDING_SAVED: "回放入库", REPLAY_PLAYED: "观看回放", ORDER_COMPLETED: "订单完成"
+  PUBLISH_START: "开始直播", PUBLISH_STOP: "结束直播", RECORDING_SAVED: "回放入库", REPLAY_PLAYED: "观看回放", PRODUCT_ADDED: "添加商品", PRODUCT_REMOVED: "移除商品", ORDER_COMPLETED: "订单完成"
 };
 
 const alertStyle = { ok: { type: "success" as const, color: "green" }, warn: { type: "warning" as const, color: "orange" }, danger: { type: "error" as const, color: "red" } };

@@ -12,6 +12,8 @@ import { AuditService } from "./audit.service.js";
 const SRS_RAW_DIR = "/var/srs-recordings";
 const SRS_CONTAINER_DIR = "/data/recordings";
 
+// 录制文件上传为后台任务：GB 级文件上传耗时分钟级，不能挂在 SRS 回调里同步等待（SRS 回调超时会重试，反而引发并发重复上传）。
+
 function srsSecret(): string {
   const key = process.env.SRS_SECRET;
   if (!key || key.length < 16) throw new ServiceUnavailableException("SRS 推流鉴权密钥未配置");
@@ -34,7 +36,15 @@ function verifyPublishToken(streamName: string, param: string): boolean {
 
 @Controller("webhooks")
 export class CloudWebhookController {
+  private readonly dvrTasks = new Map<string, Promise<void>>();
+  private readonly dvrTaskLogger = new Logger(CloudWebhookController.name);
+
   constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway, private readonly alert: AlertService) {}
+
+  /** 等待所有后台录制入库任务完成（测试用）。 */
+  async dvrIdle(): Promise<void> {
+    await Promise.all([...this.dvrTasks.values()]);
+  }
 
   @Post("srs")
   @HttpCode(200)
@@ -82,23 +92,34 @@ export class CloudWebhookController {
       const providerId = `srs:${createHash("sha256").update(objectKey).digest("hex")}`;
       const existing = await this.prisma.recording.findUnique({ where: { providerId } });
       if (existing) return 0;
-      const sizeBytes = await this.storage.localRecordingSize(localPath);
-      await this.storage.uploadRecordingFile(objectKey, localPath, sizeBytes);
-      const createdAt = new Date();
-      await this.prisma.recording.create({
-        data: {
-          providerId, roomId: room.id, objectKey, durationSecs: null, sizeMb: Math.max(1, Math.round(sizeBytes / 1024 / 1024)), createdAt,
-          expiresAt: new Date(createdAt.getTime() + recordingRetentionDays() * 24 * 60 * 60 * 1000)
-        }
-      });
-      await this.audit.log({ action: "RECORDING_SAVED", detail: `课堂「${room.title}」新增回放（约 ${Math.max(1, Math.round(sizeBytes / 1024 / 1024))} MB）` });
-      await unlink(localPath).catch((error: unknown) => {
-        // SRS 以 root 写文件、api 以 node 用户运行，删除失败时必须暴露出来，由服务器定时任务兑底清理。
-        new Logger(CloudWebhookController.name).error(`回放临时文件删除失败（将由定时任务清理）：${localPath} ${String(error)}`);
-      });
+      // 上传/入库/清理本地文件全部后台执行，回调立即返回；上传期间 SRS 重复回调由 in-flight 幂等挡住。
+      if (this.dvrTasks.has(providerId)) return 0;
+      const task = this.processDvrFile(room.id, room.title, localPath, objectKey, providerId)
+        .catch((error: unknown) => {
+          this.dvrTaskLogger.error(`回放入库失败（本地文件保留，可人工重试）：${localPath} ${String(error)}`);
+        })
+        .finally(() => { this.dvrTasks.delete(providerId); });
+      this.dvrTasks.set(providerId, task);
       return 0;
     }
 
     throw new BadRequestException("未知的 SRS 回调动作");
+  }
+
+  private async processDvrFile(roomId: string, roomTitle: string, localPath: string, objectKey: string, providerId: string): Promise<void> {
+    const sizeBytes = await this.storage.localRecordingSize(localPath);
+    await this.storage.uploadRecordingFile(objectKey, localPath, sizeBytes);
+    const createdAt = new Date();
+    await this.prisma.recording.create({
+      data: {
+        providerId, roomId, objectKey, durationSecs: null, sizeMb: Math.max(1, Math.round(sizeBytes / 1024 / 1024)), createdAt,
+        expiresAt: new Date(createdAt.getTime() + recordingRetentionDays() * 24 * 60 * 60 * 1000)
+      }
+    });
+    await this.audit.log({ action: "RECORDING_SAVED", detail: `课堂「${roomTitle}」新增回放（约 ${Math.max(1, Math.round(sizeBytes / 1024 / 1024))} MB）` });
+    await unlink(localPath).catch((error: unknown) => {
+      // SRS 以 root 写文件、api 以 node 用户运行，删除失败时必须暴露出来，由服务器定时任务兜底清理。
+      this.dvrTaskLogger.error(`回放临时文件删除失败（将由定时任务清理）：${localPath} ${String(error)}`);
+    });
   }
 }

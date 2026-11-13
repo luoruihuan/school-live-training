@@ -2,12 +2,24 @@ import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import { BadRequestException, HttpException, Injectable, UnauthorizedException } from "@nestjs/common";
+import type { Role } from "./generated/prisma/client.js";
 import { PrismaService } from "./prisma.service.js";
 import { withUserLock } from "./user-transaction.js";
 import { AuditService } from "./audit.service.js";
 
 const scrypt = promisify(scryptCallback);
 const sessionDurationMs = 7 * 24 * 60 * 60 * 1000;
+
+/** 会话验证结果（显式定义，避免 ReturnType 与短缓存字段互相推导成环）。 */
+export type CurrentUser = {
+  id: string;
+  displayName: string;
+  email: string;
+  role: Role;
+  isTest: boolean;
+  mustChangePassword: boolean;
+  sessionExpiresAt: string;
+};
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
@@ -33,7 +45,13 @@ export class AuthService {
   readonly revokedSessions = new EventEmitter();
   // shortcut: 单进程登录限频，部署多实例前改为共享限频存储；生产反代另设 IP 限频。
   private readonly attempts = new Map<string, { count: number; until: number }>();
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  // 会话短缓存：每个 HTTP 请求（含视频分片、图片等高频只读请求）都要验会话，5 秒 TTL 把重复的 session JOIN user 查询合并掉。
+  // 吊销（退出/改密/停用/重置）通过 revokedSessions 事件即时清缓存，TTL 仅作兜底。
+  private static readonly SESSION_CACHE_MS = 5_000;
+  private readonly sessionCache = new Map<string, { value: CurrentUser; expiresAt: number }>();
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {
+    this.revokedSessions.on("revoked", (hash: string) => this.sessionCache.delete(hash));
+  }
 
   async login(email: string, password: string) {
     email = email.toLowerCase();
@@ -63,13 +81,16 @@ export class AuthService {
     return { token, user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role, mustChangePassword: user.mustChangePassword } };
   }
 
-  async userForToken(token: string | undefined) {
+  async userForToken(token: string | undefined): Promise<CurrentUser> {
     if (!token) throw new UnauthorizedException("请先登录");
+    const hash = tokenHash(token);
+    const cached = this.sessionCache.get(hash);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
     const session = await this.prisma.session.findUnique({
-      where: { tokenHash: tokenHash(token) }, include: { user: true }
+      where: { tokenHash: hash }, include: { user: true }
     });
     if (!session || !session.user.isActive || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException("登录已失效");
-    return {
+    const value: CurrentUser = {
       id: session.user.id,
       displayName: session.user.displayName,
       email: session.user.email,
@@ -78,6 +99,9 @@ export class AuthService {
       mustChangePassword: session.user.mustChangePassword,
       sessionExpiresAt: session.expiresAt.toISOString()
     };
+    if (this.sessionCache.size > 10_000) this.sessionCache.clear(); // 防御性上限
+    this.sessionCache.set(hash, { value, expiresAt: Date.now() + AuthService.SESSION_CACHE_MS });
+    return value;
   }
 
   async changePassword(token: string | undefined, currentPassword: string, newPassword: string): Promise<void> {
@@ -108,5 +132,3 @@ export class AuthService {
     }
   }
 }
-
-export type CurrentUser = Awaited<ReturnType<AuthService["userForToken"]>>;
