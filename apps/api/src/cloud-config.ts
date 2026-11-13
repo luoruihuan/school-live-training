@@ -47,6 +47,9 @@ export function cdnUrlAuthKey(): string | undefined {
   return key || undefined;
 }
 
+/** 回放 CDN 直连 URL 的约定有效时长（秒），需与 CDN 控制台 TypeA 鉴权有效时长保持一致。 */
+export const REPLAY_URL_TTL_SECONDS = 6 * 60 * 60;
+
 /** 腾讯云 CDN URL 鉴权 TypeA 纯函数（便于用官方文档向量做单测）：
  *  URL：https://{domain}{uri}?sign={timestamp}-{rand}-{uid}-{md5hash}
  *  md5hash = md5(uri-timestamp-rand-uid-主密钥)，timestamp 为十进制 Unix 秒。 */

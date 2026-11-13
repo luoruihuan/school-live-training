@@ -14,7 +14,7 @@ type Overview = {
 };
 type AuditRow = { id: string; actorName: string; action: string; detail: string; ip: string | null; createdAt: string };
 type LogsPage = { items: AuditRow[]; total: number; page: number; pageSize: number; actions: { action: string; count: number }[] };
-type CdnStatus = { enabled: boolean; configured: boolean; domain: string | null; error: string | null };
+type CdnStatus = { enabled: boolean; configured: boolean; domain: string | null; error: string | null; expectedAuthTtlSeconds?: number };
 type Settings = { cdnLive: CdnStatus; replayCdn: CdnStatus };
 
 const actionText: Record<string, string> = {
@@ -34,6 +34,7 @@ export function OpsDashboard() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -52,11 +53,14 @@ export function OpsDashboard() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   async function toggleCdn(field: "cdnLiveEnabled" | "replayCdnEnabled", value: boolean, label: string): Promise<void> {
+    setSwitching(field);
     try {
       setSettings(await patch<Settings>("/ops/settings", { [field]: value }));
       void message.success(value ? `${label}已开启：观众从 CDN 边缘节点拉流` : `${label}已关闭：回退直连源站`);
     } catch (reason) {
       void message.error(reason instanceof Error ? reason.message : "切换失败");
+    } finally {
+      setSwitching(null);
     }
   }
 
@@ -102,8 +106,8 @@ export function OpsDashboard() {
               ]).map(({ key, label, field, hint }) => {
                 const status = settings[key];
                 return <div key={field} className="cdn-switch-row">
-                  <div className="cdn-switch-row__head"><Typography.Text strong={status.enabled}>{label}</Typography.Text><Switch size="small" disabled={!status.configured} checked={status.enabled} onChange={(value) => void toggleCdn(field, value, label)} /></div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{status.error ?? (status.configured ? `${hint}（${status.domain}）` : "未配置：请在服务器 .env 设置对应域名并重新部署后可开启")}</Typography.Text>
+                  <div className="cdn-switch-row__head"><Typography.Text strong={status.enabled}>{label}</Typography.Text><Switch size="small" loading={switching === field} disabled={!status.configured} checked={status.enabled} onChange={(value) => void toggleCdn(field, value, label)} /></div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{status.error ?? (status.configured ? `${hint}（${status.domain}${status.expectedAuthTtlSeconds ? `，控制台 TypeA 有效时长需为 ${status.expectedAuthTtlSeconds} 秒` : ""}）` : "未配置：请在服务器 .env 设置对应域名并重新部署后可开启")}</Typography.Text>
                 </div>;
               })}
               <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>人少可关闭节省 CDN 流量费（按量计费）；超过 12 路观看建议开启，否则源站 30Mbps 带宽会打满。切换立即生效，已进入课堂的观众不受影响，操作会记入日志。</Typography.Paragraph>

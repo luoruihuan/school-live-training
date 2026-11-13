@@ -5,7 +5,7 @@ import { stat, statfs } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaService } from "./prisma.service.js";
-import { recordingRetentionDays, replayCdnDomain, cdnUrlAuthKey, cdnTypeAUrl } from "./cloud-config.js";
+import { recordingRetentionDays, replayCdnDomain, cdnUrlAuthKey, cdnTypeAUrl, REPLAY_URL_TTL_SECONDS } from "./cloud-config.js";
 import { AlertService } from "./alert.service.js";
 
 export type ImageMime = "image/jpeg" | "image/png" | "image/webp";
@@ -152,7 +152,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     const url = authKey
       ? cdnTypeAUrl(domain, uri, authKey, Math.floor(Date.now() / 1000), "0")
       : `https://${domain}${uri}`;
-    return { url, expiresInSeconds: 6 * 60 * 60 };
+    return { url, expiresInSeconds: REPLAY_URL_TTL_SECONDS };
   }
 
   async deleteRecording(key: string): Promise<void> {

@@ -162,7 +162,10 @@ test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启"
   const { OpsController } = await import("./ops.controller.js");
   const upserts: { key: string; value: string }[] = [];
   let auditCalls = 0;
-  const opsPrisma = { systemSetting: { findMany: async () => upserts.filter((row) => row.value), upsert: async ({ data }: { data: { key: string; value: string } }) => { upserts.push(data); return data; } } } as unknown as PrismaService;
+  const opsPrisma = {
+    systemSetting: { findMany: async () => [...upserts], upsert: async ({ create }: { create: { key: string; value: string } }) => { upserts.push(create); return create; } },
+    $transaction: async (operations: Promise<unknown>[]) => { for (const op of operations) await op; }
+  } as unknown as PrismaService;
   const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService);
   const superAdmin = { currentUser: { id: "sa", role: "SUPER_ADMIN", displayName: "超管" } } as UserRequest;
   const plainAdmin = { currentUser: { id: "ad", role: "ADMIN", displayName: "管理员" } } as UserRequest;
@@ -173,4 +176,13 @@ test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启"
   const result = await controller.updateSettings(superAdmin, { cdnLiveEnabled: false }); // 关闭总是允许
   assert.equal(result.cdnLive.enabled, false);
   assert.equal(auditCalls, 1);
+
+  // 开启路径：能力配置齐全时 PATCH true 生效，返回状态与落库正确
+  process.env = { ...previous, CDN_LIVE_DOMAIN: "live-cdn.example.com", REPLAY_CDN_DOMAIN: "" };
+  const enabled = await controller.updateSettings(superAdmin, { cdnLiveEnabled: true });
+  assert.equal(enabled.cdnLive.enabled, true);
+  assert.equal(enabled.cdnLive.domain, "live-cdn.example.com");
+  assert.equal(enabled.replayCdn.enabled, false);
+  assert.deepEqual(upserts[upserts.length - 1], { key: "cdnLiveEnabled", value: "true" });
+  assert.equal(auditCalls, 2);
 });
