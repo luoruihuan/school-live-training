@@ -16,7 +16,8 @@ const room = { id: "test-room", streamName: "test-stream" };
 const prisma = {
   room: { findUnique: async ({ where }: { where: { id: string } }) => where.id === room.id ? room : null },
   recording: { findMany: async () => [], findUnique: async () => null },
-  serviceQuota: { findUnique: async () => null }
+  serviceQuota: { findUnique: async () => null },
+  systemSetting: { findMany: async () => [{ key: "cdnLiveEnabled", value: "true" }, { key: "replayCdnEnabled", value: "true" }] }
 } as unknown as PrismaService;
 const teacher = { currentUser: { role: "TEACHER" } } as UserRequest;
 const student = { currentUser: { role: "STUDENT" } } as UserRequest;
@@ -77,7 +78,7 @@ test("CDN 域名读取容错：剥协议尾斜杠、非法格式报错、留空�
   assert.throws(() => cdnLiveDomain(), /须为域名/);
 });
 
-test("直播播放地址：配置 CDN 域名后走 CDN，未配置回退源站", async (t) => {
+test("直播播放地址：配置 CDN 且开关开启后走 CDN，未配置回退源站", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   const controller = new BusinessController(prisma, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
@@ -90,14 +91,15 @@ test("直播播放地址：配置 CDN 域名后走 CDN，未配置回退源站",
   assert.equal(cdn.hls, "https://live-cdn.example.com/live/test-stream.m3u8");
 });
 
-test("回放播放地址：配置回放 CDN 后直连 CDN 且观看仍只记一次，未配置回退 API 代理", async (t) => {
+test("回放播放地址：回放 CDN 开关开启后直连 CDN 且观看仍只记一次，未配置回退 API 代理", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   const recording = { id: "rec1", roomId: room.id, objectKey: `recordings/${room.id}/a.mp4`, expiresAt: new Date(Date.now() + 86_400_000) };
   let playCount = 0; let auditCalls = 0;
   const replayPrisma = {
     room: { findUnique: async () => ({ id: room.id, status: "ENDED" }) },
-    recording: { findUnique: async () => recording, update: async () => { playCount++; } }
+    recording: { findUnique: async () => recording, update: async () => { playCount++; } },
+    systemSetting: { findMany: async () => [{ key: "replayCdnEnabled", value: "true" }] }
   } as unknown as PrismaService;
   const replayAudit = { log: async () => { auditCalls++; } } as unknown as AuditService;
   const viewer = { currentUser: { id: "u1", displayName: "同学", role: "STUDENT" } } as UserRequest;
@@ -115,4 +117,60 @@ test("回放播放地址：配置回放 CDN 后直连 CDN 且观看仍只记一�
   await cdn.playback(recording.id, viewer); // 60 秒去重：不重复计数
   assert.equal(playCount, 2);
   assert.equal(auditCalls, 2);
+});
+
+const cdnRecording = { id: "rec-cdn", roomId: room.id, objectKey: `recordings/${room.id}/cdn.mp4`, expiresAt: new Date(Date.now() + 86_400_000) };
+
+test("CDN 开关：开启后直播与回放走 CDN，关闭立即回退直连", async (t) => {
+  const previous = process.env;
+  t.after(() => { process.env = previous; });
+  process.env = { ...previous, APP_DOMAIN: "origin.demo-school.cn", CDN_LIVE_DOMAIN: "live-cdn.example.com", REPLAY_CDN_DOMAIN: "replay-cdn.example.com" };
+  const { effectiveCdnDomains } = await import("./system-settings.js");
+  let rows: { key: string; value: string }[] = [];
+  const switchPrisma = {
+    room: { findUnique: async () => ({ id: room.id, streamName: room.streamName, status: "ENDED" }) },
+    recording: { findUnique: async () => cdnRecording, update: async () => ({}) },
+    systemSetting: { findMany: async () => rows }
+  } as unknown as PrismaService;
+  const viewer = { currentUser: { id: "u1", displayName: "同学", role: "STUDENT" } } as UserRequest;
+
+  const business = new BusinessController(switchPrisma, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
+  const recordingCtl = new RecordingController(switchPrisma, new StorageService({} as never, {} as never), audit);
+
+  // 默认（未开启）：直连源站 + API 代理
+  assert.equal((await business.playbackAddress(room.id, teacher)).flv, "https://origin.demo-school.cn/live/test-stream.flv");
+  assert.equal((await recordingCtl.playback(cdnRecording.id, viewer)).url, `/api/recordings/${cdnRecording.id}/file`);
+
+  // 开启后：CDN 域名
+  rows = [{ key: "cdnLiveEnabled", value: "true" }, { key: "replayCdnEnabled", value: "true" }];
+  assert.equal((await business.playbackAddress(room.id, teacher)).flv, "https://live-cdn.example.com/live/test-stream.flv");
+  assert.match((await recordingCtl.playback(cdnRecording.id, viewer)).url, /^https:\/\/replay-cdn\.example\.com\/recordings\//);
+
+  // 开关读取异常：按关闭处理，播放不受影响
+  const brokenPrisma = { ...switchPrisma, systemSetting: { findMany: async () => { throw new Error("db down"); } } } as unknown as PrismaService;
+  const switches = await (await import("./system-settings.js")).cdnSwitches(brokenPrisma);
+  assert.deepEqual(switches, { live: false, replay: false });
+  const domains = await effectiveCdnDomains(brokenPrisma);
+  assert.equal(domains.live, undefined);
+  assert.equal(domains.replay, undefined);
+});
+
+test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启", async (t) => {
+  const previous = process.env;
+  t.after(() => { process.env = previous; });
+  process.env = { ...previous, CDN_LIVE_DOMAIN: "", REPLAY_CDN_DOMAIN: "" };
+  const { OpsController } = await import("./ops.controller.js");
+  const upserts: { key: string; value: string }[] = [];
+  let auditCalls = 0;
+  const opsPrisma = { systemSetting: { findMany: async () => upserts.filter((row) => row.value), upsert: async ({ data }: { data: { key: string; value: string } }) => { upserts.push(data); return data; } } } as unknown as PrismaService;
+  const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService);
+  const superAdmin = { currentUser: { id: "sa", role: "SUPER_ADMIN", displayName: "超管" } } as UserRequest;
+  const plainAdmin = { currentUser: { id: "ad", role: "ADMIN", displayName: "管理员" } } as UserRequest;
+
+  await assert.rejects(controller.settings(plainAdmin), ForbiddenException);
+  await assert.rejects(controller.updateSettings(plainAdmin, { cdnLiveEnabled: true }), ForbiddenException);
+  await assert.rejects(controller.updateSettings(superAdmin, { cdnLiveEnabled: true }), /CDN_LIVE_DOMAIN/); // 能力未配置
+  const result = await controller.updateSettings(superAdmin, { cdnLiveEnabled: false }); // 关闭总是允许
+  assert.equal(result.cdnLive.enabled, false);
+  assert.equal(auditCalls, 1);
 });

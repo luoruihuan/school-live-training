@@ -274,6 +274,12 @@ model AuditLog {
   @@index([userId, createdAt])
 }
 
+model SystemSetting {
+  key       String   @id @db.VarChar(50)
+  value     String   @db.VarChar(500)
+  updatedAt DateTime @updatedAt
+}
+
 model ResourceDaily {
   date           String   @id @db.VarChar(10)
   liveSeconds    Int      @default(0)

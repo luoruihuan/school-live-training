@@ -1,9 +1,13 @@
 import { connect } from "node:net";
-import { Controller, ForbiddenException, Get, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Patch, Query, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard, requireSuperAdmin, type UserRequest } from "./auth.guard.js";
+import { object } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
+import { AuditService } from "./audit.service.js";
+import { cdnLiveDomain, replayCdnDomain } from "./cloud-config.js";
+import { CDN_LIVE_SWITCH, REPLAY_CDN_SWITCH, cdnSwitches } from "./system-settings.js";
 
 type Alert = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
 
@@ -25,7 +29,58 @@ function tcpProbe(host: string, port: number, timeoutMs = 1500): Promise<boolean
 @Controller("ops")
 @UseGuards(AuthGuard)
 export class OpsController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
+
+  /** 单个 CDN 能力项的当前状态：开关值 + 环境变量是否已配置（含格式错误原因）。 */
+  private cdnStatus(enabled: boolean, reader: () => string | undefined, envName: string) {
+    try {
+      const domain = reader();
+      return { enabled, configured: !!domain, domain: domain ?? null, error: null as string | null };
+    } catch (error) {
+      return { enabled: false, configured: false, domain: null, error: `${envName} 配置不合法：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  @Get("settings")
+  async settings(@Req() request: UserRequest) {
+    requireSuperAdmin(request.currentUser);
+    const switches = await cdnSwitches(this.prisma);
+    return {
+      cdnLive: this.cdnStatus(switches.live, cdnLiveDomain, "CDN_LIVE_DOMAIN"),
+      replayCdn: this.cdnStatus(switches.replay, replayCdnDomain, "REPLAY_CDN_DOMAIN")
+    };
+  }
+
+  @Patch("settings")
+  async updateSettings(@Req() request: UserRequest, @Body() body: unknown) {
+    requireSuperAdmin(request.currentUser);
+    const input = object(body);
+    const next: { key: string; value: "true" | "false" }[] = [];
+    const before = await cdnSwitches(this.prisma);
+    for (const [field, switchKey, reader, envName] of [
+      ["cdnLiveEnabled", CDN_LIVE_SWITCH, cdnLiveDomain, "CDN_LIVE_DOMAIN"],
+      ["replayCdnEnabled", REPLAY_CDN_SWITCH, replayCdnDomain, "REPLAY_CDN_DOMAIN"]
+    ] as const) {
+      const value = input[field];
+      if (value === undefined) continue;
+      if (typeof value !== "boolean") throw new BadRequestException("开关参数不正确");
+      if (value) {
+        const status = this.cdnStatus(false, reader, envName);
+        if (!status.configured) throw new BadRequestException(status.error ?? `请先在服务器配置 ${envName} 后再开启`);
+      }
+      next.push({ key: switchKey, value: value ? "true" : "false" });
+    }
+    if (!next.length) throw new BadRequestException("没有需要更新的设置");
+    for (const item of next) {
+      await this.prisma.systemSetting.upsert({ where: { key: item.key }, update: { value: item.value }, create: item });
+    }
+    const after = await cdnSwitches(this.prisma);
+    await this.audit.log({
+      action: "CDN_SWITCH", actorName: request.currentUser.displayName, request,
+      detail: `${request.currentUser.displayName} 切换 CDN 分发：直播 ${before.live ? "开" : "关"}→${after.live ? "开" : "关"}，回放 ${before.replay ? "开" : "关"}→${after.replay ? "开" : "关"}`
+    });
+    return this.settings(request);
+  }
 
   @Get("overview")
   async overview(@Req() request: UserRequest) {

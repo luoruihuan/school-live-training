@@ -5,6 +5,7 @@ import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { visibleRoom } from "./room-access.js";
 import { AuditService } from "./audit.service.js";
+import { effectiveCdnDomains } from "./system-settings.js";
 
 const MAX_CHUNK = 8 * 1024 * 1024;
 
@@ -46,8 +47,9 @@ export class RecordingController {
       await this.audit.log({ action: "REPLAY_PLAYED", userId: request.currentUser.id, actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 观看回放（课堂 ${recording.roomId.slice(-6).toUpperCase()}）` });
     }
     const remaining = Math.max(1, Math.floor((recording.expiresAt.getTime() - Date.now()) / 1000));
-    // 配置了回放 CDN 域名时直连 CDN（服务器不再代理视频流）；未配置时回退 API 代理。
-    const cdn = recording.objectKey?.endsWith(".mp4") ? this.storage.recordingPlaybackUrl(recording.objectKey) : null;
+    // 回放 CDN 直连：环境变量能力 × 超管开关，任一不满足都回退 API 代理。
+    const { replay: replayCdnOn } = await effectiveCdnDomains(this.prisma);
+    const cdn = replayCdnOn && recording.objectKey?.endsWith(".mp4") ? this.storage.recordingPlaybackUrl(recording.objectKey) : null;
     if (cdn) return { url: cdn.url, expiresInSeconds: Math.min(remaining, cdn.expiresInSeconds) };
     return { url: `/api/recordings/${recording.id}/file`, expiresInSeconds: remaining };
   }
