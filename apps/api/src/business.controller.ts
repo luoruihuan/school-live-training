@@ -13,7 +13,6 @@ import { withUserLock } from "./user-transaction.js";
 import { visibleRoom } from "./room-access.js";
 import { dataScope, isTestCreator, sameSideCreate, scoped, assertSameSide } from "./data-scope.js";
 import { publishToken } from "./cloud-webhook.controller.js";
-import { cdnLiveDomain } from "./cloud-config.js";
 import { effectiveCdnDomains } from "./system-settings.js";
 import { ChatGateway } from "./chat.gateway.js";
 
@@ -186,8 +185,8 @@ export class BusinessController {
     const room = await this.room(id, request);
     const domain = liveDomain(); // APP_DOMAIN 必须配置（CDN 回源也指向它）
     // 直播 CDN：环境变量能力 × 超管开关；未开启时观众直连源站。
-    const { live: liveCdnOn } = await effectiveCdnDomains(this.prisma);
-    const host = liveCdnOn ? cdnLiveDomain() ?? domain : domain;
+    const { live: liveCdnHost } = await effectiveCdnDomains(this.prisma);
+    const host = liveCdnHost ?? domain;
     return {
       status: room.status,
       flv: `https://${host}/live/${room.streamName}.flv`,

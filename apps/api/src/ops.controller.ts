@@ -6,7 +6,7 @@ import { object } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { AuditService } from "./audit.service.js";
-import { cdnLiveDomain, replayCdnDomain } from "./cloud-config.js";
+import { cdnLiveDomain, replayCdnDomain, REPLAY_URL_TTL_SECONDS } from "./cloud-config.js";
 import { CDN_LIVE_SWITCH, REPLAY_CDN_SWITCH, cdnSwitches } from "./system-settings.js";
 
 type Alert = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
@@ -47,7 +47,11 @@ export class OpsController {
     const switches = await cdnSwitches(this.prisma);
     return {
       cdnLive: this.cdnStatus(switches.live, cdnLiveDomain, "CDN_LIVE_DOMAIN"),
-      replayCdn: this.cdnStatus(switches.replay, replayCdnDomain, "REPLAY_CDN_DOMAIN")
+      replayCdn: {
+        ...this.cdnStatus(switches.replay, replayCdnDomain, "REPLAY_CDN_DOMAIN"),
+        // 面板展示用：提醒控制台 TypeA 有效时长需与此一致，否则观看中 seek 可能被 403
+        expectedAuthTtlSeconds: REPLAY_URL_TTL_SECONDS
+      }
     };
   }
 
@@ -71,9 +75,9 @@ export class OpsController {
       next.push({ key: switchKey, value: value ? "true" : "false" });
     }
     if (!next.length) throw new BadRequestException("没有需要更新的设置");
-    for (const item of next) {
-      await this.prisma.systemSetting.upsert({ where: { key: item.key }, update: { value: item.value }, create: item });
-    }
+    await this.prisma.$transaction(next.map((item) =>
+      this.prisma.systemSetting.upsert({ where: { key: item.key }, update: { value: item.value }, create: item })
+    ));
     const after = await cdnSwitches(this.prisma);
     await this.audit.log({
       action: "CDN_SWITCH", actorName: request.currentUser.displayName, request,
