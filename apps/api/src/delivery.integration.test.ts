@@ -38,7 +38,7 @@ test("真实数据库：结算并发、数量边界、账号生命周期和角�
   const business = new BusinessController(db, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
   const commerce = new CommerceController(db, audit);
   const auth = new AuthService(db, audit);
-  const accounts = new AccountController(db, new ChatGateway(auth, db), audit);
+  const accounts = new AccountController(db, new ChatGateway(auth, db), audit, auth);
 
   await t.test("学生不能通过商品列表或购物车进入草稿课堂", async () => {
     await db.room.update({ where: { id: room.id }, data: { status: "DRAFT" } });

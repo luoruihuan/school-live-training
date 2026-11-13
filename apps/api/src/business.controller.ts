@@ -290,10 +290,14 @@ export class BusinessController {
     assertSameSide(room, product);
     if (room.storeId !== product.storeId) throw new BadRequestException("商品不属于直播间店铺");
     const position = input.position === undefined ? 0 : integerField(input, "position", 0, 9999);
+    const existing = await this.prisma.roomProduct.findUnique({ where: { roomId_productId: { roomId: id, productId } } });
     const binding = await this.prisma.roomProduct.upsert({
       where: { roomId_productId: { roomId: id, productId } },
       update: { position }, create: { roomId: id, productId, position }
     });
+    if (!existing) {
+      await this.audit.log({ action: "PRODUCT_ADDED", actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 向课堂「${room.title}」添加了商品「${product.name}」` });
+    }
     // 非准备中的课堂才实时推送（DRAFT 课堂对学生不可见，无需广播）
     if (room.status !== "DRAFT") {
       this.chat.broadcastRoomProducts(id, "bound", { id: product.id, name: product.name, pointsPrice: product.pointsPrice, isActive: product.isActive, position: binding.position });
@@ -306,6 +310,9 @@ export class BusinessController {
     requireStaff(request.currentUser);
     const room = visibleRoom(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser);
     const result = await this.prisma.roomProduct.deleteMany({ where: { roomId: id, productId } });
+    if (result.count) {
+      await this.audit.log({ action: "PRODUCT_REMOVED", actorName: request.currentUser.displayName, request, detail: `${request.currentUser.displayName} 从课堂 ${id.slice(-6).toUpperCase()} 移除了商品（${productId.slice(-8).toUpperCase()}）` });
+    }
     if (result.count && room.status !== "DRAFT") {
       const product = await this.prisma.product.findUnique({ where: { id: productId }, select: { id: true, name: true, pointsPrice: true, isActive: true } });
       if (product) this.chat.broadcastRoomProducts(id, "unbound", { ...product, position: 0 });

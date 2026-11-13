@@ -23,6 +23,9 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(StorageService.name);
   private readonly buckets = { images: "product-images", recordings: "recordings" } as const;
   private cleanupTimer?: NodeJS.Timeout;
+  // S3Client 实例复用（媒体请求高频：视频分片/图片都走这里），避免每次请求重建 TCP+TLS 连接。
+  private minioClient?: S3Client;
+  private cosClient?: S3Client;
 
   constructor(private readonly prisma: PrismaService, private readonly alert: AlertService) {}
 
@@ -37,12 +40,15 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
 
   private recordingsClient(): S3Client {
     if (!this.cosConfigured()) return this.client();
-    return new S3Client({
-      endpoint: process.env.COS_ENDPOINT,
-      region: process.env.COS_REGION || "ap-tokyo",
-      credentials: { accessKeyId: process.env.COS_SECRET_ID!, secretAccessKey: process.env.COS_SECRET_KEY! },
-      forcePathStyle: false
-    });
+    if (!this.cosClient) {
+      this.cosClient = new S3Client({
+        endpoint: process.env.COS_ENDPOINT,
+        region: process.env.COS_REGION || "ap-tokyo",
+        credentials: { accessKeyId: process.env.COS_SECRET_ID!, secretAccessKey: process.env.COS_SECRET_KEY! },
+        forcePathStyle: false
+      });
+    }
+    return this.cosClient;
   }
 
   private get recordingsBucket(): string {
@@ -50,13 +56,15 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   private client(): S3Client {
+    if (this.minioClient) return this.minioClient;
     const endpoint = process.env.MINIO_ENDPOINT;
     const accessKeyId = process.env.MINIO_ROOT_USER;
     const secretAccessKey = process.env.MINIO_ROOT_PASSWORD;
     if (!endpoint || !accessKeyId || !secretAccessKey) {
       throw new ServiceUnavailableException("MinIO 存储未配置，请设置 MINIO_* 环境变量");
     }
-    return new S3Client({ endpoint, region: "us-east-1", credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true });
+    this.minioClient = new S3Client({ endpoint, region: "us-east-1", credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true });
+    return this.minioClient;
   }
 
   async onModuleInit(): Promise<void> {
