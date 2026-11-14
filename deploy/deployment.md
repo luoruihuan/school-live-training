@@ -43,7 +43,7 @@ ssh tokyo 'bash /srv/live-training/deploy/deploy.sh'
 ```bash
 ssh tokyo 'docker ps --filter name=live-training --format "{{.Names}}\t{{.Status}}"'          # 服务状态
 ssh tokyo 'docker logs live-training-api-1 --since 10m 2>&1 | tail -30'                        # 最近日志
-ssh tokyo 'ls -la /srv/live-training/backups/'                                                  # 备份盘点
+ssh tokyo 'ls -la /srv/live-training/backups/'                                                  # 备份盘点（迁移后改 shanghai）
 ```
 
 ## 五点五、备份与回放存储（2026-11-14 简化后终态）
@@ -52,7 +52,8 @@ ssh tokyo 'ls -la /srv/live-training/backups/'                                  
   API 通过 S3 兼容接口读写，objectKey 不变；清空 .env 中 COS_* 变量即整体回退 MinIO
   （原东京桶 live-recordings-1319925518 已于 2026-11-14 删除）。
 - 回放不另做备份副本：正本即 COS（11个9 持久性），180 天生命周期自动删除。
-- 每日备份（root crontab 03:15）：`/usr/local/bin/backup-to-oracle.sh` → 甲骨文对象存储桶
+- 每日备份（ubuntu crontab 03:15）：`/usr/local/bin/backup-to-oracle.sh`（源文件版本化于 deploy/server/backup-to-oracle.sh，
+  改动后需同步到两台服务器）→ 甲骨文对象存储桶
   `live-recordings` 的 `backup/mysql/`（按时间戳独立文件，永不覆盖，本地与桶内均保留 14 天）
   与 `backup/product-images/`（商品图 copy-only）；失败自动飞书告警。
   已下线：backup-to-cos.sh 与 COS 备份桶 live-backup（2026-11-14 删除）。
