@@ -43,7 +43,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     if (!this.cosClient) {
       this.cosClient = new S3Client({
         endpoint: process.env.COS_ENDPOINT,
-        region: process.env.COS_REGION || "ap-tokyo",
+        region: process.env.COS_REGION || "ap-shanghai",
         credentials: { accessKeyId: process.env.COS_SECRET_ID!, secretAccessKey: process.env.COS_SECRET_KEY! },
         forcePathStyle: false
       });

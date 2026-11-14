@@ -48,9 +48,9 @@ ssh tokyo 'ls -la /srv/live-training/backups/'                                  
 
 ## 五点五、备份与回放存储（2026-11-14 简化后终态）
 
-- 回放长期层：腾讯 COS 桶（2026-11-14 起录制写入上海桶 `live-recordings-sh-1319925518`，
-  东京桶保留待迁移后清理）；API 通过 S3 兼容接口读写，objectKey 不变；
-  清空 .env 中 COS_* 变量即整体回退 MinIO。
+- 回放长期层：腾讯 COS 上海桶 `live-recordings-sh-1319925518`（2026-11-14 切入，回源走国内 CDN）；
+  API 通过 S3 兼容接口读写，objectKey 不变；清空 .env 中 COS_* 变量即整体回退 MinIO
+  （原东京桶 live-recordings-1319925518 已于 2026-11-14 删除）。
 - 回放不另做备份副本：正本即 COS（11个9 持久性），180 天生命周期自动删除。
 - 每日备份（root crontab 03:15）：`/usr/local/bin/backup-to-oracle.sh` → 甲骨文对象存储桶
   `live-recordings` 的 `backup/mysql/`（按时间戳独立文件，永不覆盖，本地与桶内均保留 14 天）
