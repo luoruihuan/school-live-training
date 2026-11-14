@@ -46,12 +46,17 @@ ssh tokyo 'docker logs live-training-api-1 --since 10m 2>&1 | tail -30'         
 ssh tokyo 'ls -la /srv/live-training/backups/'                                                  # 备份盘点
 ```
 
-## 五点五、备份与回放存储（2026-11-12 起）
+## 五点五、备份与回放存储（2026-11-14 简化后终态）
 
-- 回放长期层：腾讯 COS 桶 `live-recordings-1319925518`（东京，同地域内网免流量费）；
-  API 通过 S3 兼容接口读写，objectKey 不变；清空 .env 中 COS_* 变量即整体回退 MinIO（存量已双向同步）。
-- 每日备份：`/usr/local/bin/backup-to-cos.sh`（root crontab 03:15）→ COS 桶 `live-backup-1319925518`
-  （mysql dump + 商品图 + legacy 录像）；Oracle 桶降级为每周日 03:20 跨云兜底。
+- 回放长期层：腾讯 COS 桶（2026-11-14 起录制写入上海桶 `live-recordings-sh-1319925518`，
+  东京桶保留待迁移后清理）；API 通过 S3 兼容接口读写，objectKey 不变；
+  清空 .env 中 COS_* 变量即整体回退 MinIO。
+- 回放不另做备份副本：正本即 COS（11个9 持久性），180 天生命周期自动删除。
+- 每日备份（root crontab 03:15）：`/usr/local/bin/backup-to-oracle.sh` → 甲骨文对象存储桶
+  `live-recordings` 的 `backup/mysql/`（按时间戳独立文件，永不覆盖，本地与桶内均保留 14 天）
+  与 `backup/product-images/`（商品图 copy-only）；失败自动飞书告警。
+  已下线：backup-to-cos.sh 与 COS 备份桶 live-backup（2026-11-14 删除）。
+- 发布时备份：deploy.sh 每次部署前全库备份（本地保留 10 份），机制不变。
 - COS 桶生命周期：recordings 桶 180 天自动删除（与 RECORDING_RETENTION_DAYS 对齐）+ 30 天清理上传碎片。
 
 ## 六、已登记的迁移
