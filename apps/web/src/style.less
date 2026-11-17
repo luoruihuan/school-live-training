@@ -161,3 +161,12 @@ textarea { resize: vertical; min-height: 74px; }
   .checkout { align-items: stretch; flex-direction: column; }
   .checkout label, .checkout .button { width: 100%; }
 }
+
+// 运维面板紧凑统计卡:替代 Statistic 大数字,三行结构统一高度
+.ops-stat { height: 100%; }
+.ops-stat .ant-card-body { padding: 10px 14px; }
+.ops-stat__label { font-size: 12px; color: rgba(0, 0, 0, 0.45); margin-bottom: 2px; }
+.ops-stat__value { font-size: 18px; font-weight: 600; line-height: 1.4; color: rgba(0, 0, 0, 0.88); }
+.ops-stat__value small { font-size: 12px; font-weight: 400; color: rgba(0, 0, 0, 0.45); margin-left: 2px; }
+.ops-stat__live { color: #cf1322; }
+.ops-stat__sub { font-size: 12px; color: rgba(0, 0, 0, 0.45); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
