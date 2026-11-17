@@ -75,6 +75,8 @@ services:
     environment: *api-environment
     volumes:
       - srs_recordings:/var/srs-recordings
+      # 宿主机网卡计数(只读):运维面板实时出口带宽采样用(CDN 时代的回源监控)
+      - /proc/net/dev:/host/proc/net/dev:ro
     depends_on:
       initialize:
         condition: service_completed_successfully
