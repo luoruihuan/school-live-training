@@ -1,4 +1,5 @@
 import { connect } from "node:net";
+import { readFile } from "node:fs/promises";
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Patch, Query, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard, requireSuperAdmin, type UserRequest } from "./auth.guard.js";
@@ -6,15 +7,17 @@ import { object } from "./input.js";
 import { PrismaService } from "./prisma.service.js";
 import { StorageService } from "./storage.service.js";
 import { AuditService } from "./audit.service.js";
+import { ChatGateway } from "./chat.gateway.js";
 import { cdnLiveDomain, replayCdnDomain, REPLAY_URL_TTL_SECONDS } from "./cloud-config.js";
 import { CDN_LIVE_SWITCH, REPLAY_CDN_SWITCH, cdnSwitches } from "./system-settings.js";
 
 type Alert = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
 
-const VIEWER_WARN = 10;
-const VIEWER_DANGER = 12;
 const DISK_WARN = 75;
 const DISK_DANGER = 85;
+// CDN 模式下服务器只出回源流量(上海机带宽上限 5Mbps):空闲>3 或直播中>4 视为异常
+const EGRESS_IDLE_DANGER = 3;
+const EGRESS_LIVE_WARN = 4;
 
 function tcpProbe(host: string, port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
@@ -29,7 +32,7 @@ function tcpProbe(host: string, port: number, timeoutMs = 1500): Promise<boolean
 @Controller("ops")
 @UseGuards(AuthGuard)
 export class OpsController {
-  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, private readonly audit: AuditService, private readonly chat: ChatGateway) {}
 
   /** 单个 CDN 能力项的当前状态：开关值 + 环境变量是否已配置（含格式错误原因）。 */
   private cdnStatus(enabled: boolean, reader: () => string | undefined, envName: string) {
@@ -101,17 +104,22 @@ export class OpsController {
 
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const since30 = new Date(Date.now() - 30 * 86400_000);
-    const [userTotal, todayLogins, activeSessions, recordingAgg, replayAgg, liveSeconds30, liveRooms] = await Promise.all([
+    const [egress, userTotal, todayLogins, activeSessions, recordingAgg, replayAgg, liveSeconds30, liveRooms, todayPublishes, todayReplayViews, todayRecordingAgg] = await Promise.all([
+      this.egressMbps(),
       this.prisma.user.count({ where: { isActive: true } }),
       this.prisma.auditLog.count({ where: { action: "LOGIN", createdAt: { gte: dayStart } } }),
       this.prisma.session.count({ where: { expiresAt: { gt: new Date() } } }),
       this.prisma.recording.aggregate({ _sum: { sizeMb: true }, _count: true }),
       this.prisma.recording.aggregate({ where: { createdAt: { gte: since30 } }, _sum: { sizeMb: true } }),
       this.prisma.room.aggregate({ _sum: { liveSecondsTotal: true } }),
-      this.prisma.room.findMany({ where: { status: "LIVE" }, select: { lastPublishAt: true } })
+      this.prisma.room.findMany({ where: { status: "LIVE" }, select: { lastPublishAt: true } }),
+      this.prisma.auditLog.count({ where: { action: "PUBLISH_START", createdAt: { gte: dayStart } } }),
+      this.prisma.auditLog.count({ where: { action: "REPLAY_PLAYED", createdAt: { gte: dayStart } } }),
+      this.prisma.recording.aggregate({ where: { createdAt: { gte: dayStart } }, _sum: { sizeMb: true } })
     ]);
     // 进行中的直播尚未结算入库（停播回调才累加 liveSecondsTotal），实时补足当前流的已推秒数。
     const ongoingSeconds = liveRooms.reduce((sum, room) => room.lastPublishAt ? sum + Math.max(0, Math.floor((Date.now() - room.lastPublishAt.getTime()) / 1000)) : sum, 0);
+    const todayRecordingMb = todayRecordingAgg._sum.sizeMb ?? 0;
 
     const diskFreeGb = await this.diskFreeGb();
     const monthlyGrowthMb = replayAgg._sum.sizeMb ?? 0;
@@ -122,13 +130,14 @@ export class OpsController {
         key: `bitrate-${stream.streamName}`,
         level: "warn" as const,
         title: `推流码率偏高（${stream.kbpsRecv} kbps，建议 1200~1500）`,
-        message: "请在 OBS 设置 → 输出 → 串流中把码率降到 1200~1500 Kbps：720p 教学画面足够清晰，存储与带宿耗直接减半，可支撑的观看路数也从约 10 路提升到约 18 路。"
+        message: "请在 OBS 设置 → 输出 → 串流中把码率降到 1200~1500 Kbps：观众走 CDN 不限路数，但码率直接决定 CDN 流量费与回放存储，降低可省一半以上成本。"
       })),
-      viewers >= VIEWER_DANGER
-        ? { key: "viewers", level: "danger", title: `当前 ${viewers} 路同时观看，已到带宽上限`, message: "30Mbps 带宽按 2.5Mbps 码率最多支撑约 12 路流畅观看。请立即让教师把 OBS 码率降到 1.2~1.5Mbps（可撑约 20~24 路），或升级服务器带宽。" }
-        : viewers >= VIEWER_WARN
-          ? { key: "viewers", level: "warn", title: `当前 ${viewers} 路同时观看，接近带宽上限（约 12 路）`, message: "建议教师把 OBS 码率控制在 2Mbps 以内；若观看人数还将增长，提前规划升级带宽。" }
-          : { key: "viewers", level: "ok", title: `当前 ${viewers} 路观看，带宽余量充足`, message: "30Mbps 带宽约支撑 12 路（2.5Mbps 码率）流畅观看，当前无压力。" },
+      ...streams.length === 0 && egress > EGRESS_IDLE_DANGER
+        ? [{ key: "egress-idle", level: "danger" as const, title: `当前无直播，但服务器出口流量 ${egress} Mbps`, message: "CDN 模式下空闲时出口应接近 0。请检查：是否有观众在直连源站（CDN 开关被关闭？）、是否有异常流量消耗带宽包。" }] : [],
+      ...streams.length > 0 && egress > EGRESS_LIVE_WARN
+        ? [{ key: "egress-live", level: "warn" as const, title: `直播中出口流量 ${egress} Mbps，接近 5Mbps 带宽上限`, message: "出口≈回源路数×码率：观众集中时应在 1~3Mbps。偏高说明 CDN 回源路数多或存在直连，请检查 CDN 开关与观众分布。" }] : [],
+      ...streams.length > 0 && egress <= EGRESS_LIVE_WARN
+        ? [{ key: "egress-live", level: "ok" as const, title: `直播中出口 ${egress} Mbps（回源正常，观众由 CDN 承载）`, message: "服务器只出回源流量，带宽上限 5Mbps，当前余量充足。" }] : [],
       diskPercent === null
         ? { key: "disk", level: "warn", title: "磁盘使用率读取失败", message: "API 容器无法读取数据卷所在文件系统，请人工检查。" }
         : diskPercent >= DISK_DANGER
@@ -150,6 +159,18 @@ export class OpsController {
     ];
 
     return {
+      live: {
+        active: streams.length > 0,
+        streams,
+        startedAt: (await this.prisma.room.findFirst({ where: { status: "LIVE" }, orderBy: { lastPublishAt: "desc" }, select: { lastPublishAt: true } }))?.lastPublishAt?.toISOString() ?? null
+      },
+      online: this.chat.onlineConnections(),
+      egressMbps: egress,
+      today: {
+        publishes: todayPublishes,
+        replayViews: todayReplayViews,
+        newRecordingMb: todayRecordingMb
+      },
       server: {
         diskPercent,
         diskFreeGb,
@@ -174,14 +195,35 @@ export class OpsController {
     requireSuperAdmin(request.currentUser);
     const page = query.page === undefined ? 1 : Number(query.page);
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new ForbiddenException("页码不正确");
+    const pageSize = query.pageSize === undefined ? 5 : Number(query.pageSize);
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new ForbiddenException("每页条数不正确");
     const action = typeof query.action === "string" && /^[A-Z_]{2,40}$/.test(query.action) ? query.action : undefined;
     const where = action ? { action } : {};
     const [items, total, actions] = await this.prisma.$transaction([
-      this.prisma.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * 20, take: 20 }),
+      this.prisma.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
       this.prisma.auditLog.count({ where }),
       this.prisma.auditLog.groupBy({ by: ["action"], _count: true, orderBy: { _count: { action: "desc" } } })
     ]);
-    return { items, total, page, pageSize: 20, actions: actions.map((row) => ({ action: row.action, count: row._count })) };
+    return { items, total, page, pageSize, actions: actions.map((row) => ({ action: row.action, count: row._count })) };
+  }
+
+  /** 服务器实时出口带宽(Mbps):读宿主机 /proc/net/dev(compose 只读挂载为 /host/proc/net/dev),两次采样求 TX 速率。 */
+  private async egressMbps(): Promise<number> {
+    const readTxBytes = async (): Promise<number | null> => {
+      try {
+        const text = await readFile("/host/proc/net/dev", "utf8");
+        const line = text.split("\n").find((row: string) => row.trim().startsWith("eth0:"));
+        if (!line) return null;
+        const tx = Number(line.split(":")[1]?.trim().split(/\s+/)[8]);
+        return Number.isFinite(tx) ? tx : null;
+      } catch { return null; }
+    };
+    const first = await readTxBytes();
+    if (first === null) return 0;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const second = await readTxBytes();
+    if (second === null || second < first) return 0;
+    return Math.round(((second - first) * 8 / 1.5 / 1_000_000) * 10) / 10;
   }
 
   private async liveStreams(): Promise<{ streamName: string; clients: number; kbps: number; kbpsRecv: number }[]> {

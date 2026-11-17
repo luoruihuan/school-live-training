@@ -41,7 +41,7 @@ export function OpsDashboard() {
     try {
       const [data, logPage, config] = await Promise.all([
         api<Overview>("/ops/overview"),
-        api<LogsPage>(`/ops/audit-logs?page=${page}${action ? `&action=${action}` : ""}`),
+        api<LogsPage>(`/ops/audit-logs?page=${page}&pageSize=5${action ? `&action=${action}` : ""}`),
         api<Settings>("/ops/settings")
       ]);
       setOverview(data); setLogs(logPage); setSettings(config);
@@ -122,7 +122,7 @@ export function OpsDashboard() {
         options={(logs?.actions ?? []).map((row) => ({ value: row.action, label: `${actionText[row.action] ?? row.action}（${row.count}）` }))} />
       <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>刷新</Button>
     </Space>} styles={{ body: { padding: 0 } }}>
-      <Table<AuditRow> rowKey="id" dataSource={logs?.items ?? []} loading={loading && !logs} pagination={{ current: page, pageSize: 20, total: logs?.total ?? 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `共 ${total} 条` }} scroll={{ x: 750 }}
+      <Table<AuditRow> rowKey="id" dataSource={logs?.items ?? []} loading={loading && !logs} pagination={{ current: page, pageSize: 5, total: logs?.total ?? 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `共 ${total} 条` }} scroll={{ x: 750 }}
         columns={[
           { title: "时间", width: 170, render: (_, row) => new Date(row.createdAt).toLocaleString("zh-CN") },
           { title: "动作", width: 110, render: (_, row) => <Tag color={row.action.includes("FAILED") ? "red" : row.action.startsWith("PUBLISH") ? "green" : "blue"}>{actionText[row.action] ?? row.action}</Tag> },

@@ -166,7 +166,7 @@ test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启"
     systemSetting: { findMany: async () => [...upserts], upsert: async ({ create }: { create: { key: string; value: string } }) => { upserts.push(create); return create; } },
     $transaction: async (operations: Promise<unknown>[]) => { for (const op of operations) await op; }
   } as unknown as PrismaService;
-  const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService);
+  const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService, { onlineConnections: () => 0 } as never);
   const superAdmin = { currentUser: { id: "sa", role: "SUPER_ADMIN", displayName: "超管" } } as UserRequest;
   const plainAdmin = { currentUser: { id: "ad", role: "ADMIN", displayName: "管理员" } } as UserRequest;
 
