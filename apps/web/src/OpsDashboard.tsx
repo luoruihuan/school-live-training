@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, App, Button, Card, Col, Progress, Row, Select, Space, Spin, Statistic, Switch, Table, Tag, Typography } from "antd";
+import { Alert, App, Button, Card, Col, Progress, Row, Select, Space, Spin, Switch, Table, Tag, Typography } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { api, patch } from "./api";
 
@@ -80,17 +80,26 @@ export function OpsDashboard() {
       </Row>
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} md={6}><Card size="small"><Statistic
-          title="直播实况" value={overview.live.active ? "直播中" : "空闲"}
-          valueStyle={overview.live.active ? { color: "#cf1322" } : undefined}
-          suffix={overview.live.active ? ` · ${overview.live.streams[0].kbpsRecv} kbps · ${overview.viewers} 路${overview.live.startedAt ? ` · 已播 ${Math.floor((Date.now() - new Date(overview.live.startedAt).getTime()) / 60000)} 分` : ""}` : ""}
-        /></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="当前在线" value={overview.online} suffix={`人 · 今日登录 ${overview.users.todayLogins}`} /></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic
-          title="出口带宽(实时)" value={overview.egressMbps} suffix="Mbps"
-          valueStyle={overview.egressMbps > 4 ? { color: "#cf1322" } : overview.egressMbps > 3 ? { color: "#faad14" } : undefined}
-        /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{overview.live.active ? "观众由 CDN 承载，此为回源流量" : "空闲时应接近 0"}</Typography.Text></Card></Col>
-        <Col xs={12} md={6}><Card size="small"><Statistic title="今日运营" value={overview.today.publishes} suffix={`场 · 回放被看 ${overview.today.replayViews} 次 · 新增 ${overview.today.newRecordingMb}MB`} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small" className="ops-stat">
+          <div className="ops-stat__label">直播实况</div>
+          <div className="ops-stat__value">{overview.live.active ? <span className="ops-stat__live">● 直播中</span> : "空闲"}</div>
+          <div className="ops-stat__sub">{overview.live.active ? `${overview.live.streams[0].kbpsRecv} kbps · ${overview.viewers} 路${overview.live.startedAt ? ` · 已播 ${Math.floor((Date.now() - new Date(overview.live.startedAt).getTime()) / 60000)} 分钟` : ""}` : "当前没有正在进行的直播"}</div>
+        </Card></Col>
+        <Col xs={12} md={6}><Card size="small" className="ops-stat">
+          <div className="ops-stat__label">当前在线</div>
+          <div className="ops-stat__value">{overview.online} <small>人</small></div>
+          <div className="ops-stat__sub">今日登录 {overview.users.todayLogins} 人</div>
+        </Card></Col>
+        <Col xs={12} md={6}><Card size="small" className="ops-stat">
+          <div className="ops-stat__label">出口带宽(实时)</div>
+          <div className="ops-stat__value" style={overview.egressMbps > 4 ? { color: "#cf1322" } : overview.egressMbps > 3 ? { color: "#faad14" } : undefined}>{overview.egressMbps} <small>Mbps</small></div>
+          <div className="ops-stat__sub">{overview.live.active ? "观众由 CDN 承载,此为回源流量" : "空闲时应接近 0"}</div>
+        </Card></Col>
+        <Col xs={12} md={6}><Card size="small" className="ops-stat">
+          <div className="ops-stat__label">今日运营</div>
+          <div className="ops-stat__value">开播 {overview.today.publishes} <small>场</small></div>
+          <div className="ops-stat__sub">回放被看 {overview.today.replayViews} 次 · 新增录像 {overview.today.newRecordingMb}MB</div>
+        </Card></Col>
       </Row>
 
       <Row gutter={[12, 12]}>
