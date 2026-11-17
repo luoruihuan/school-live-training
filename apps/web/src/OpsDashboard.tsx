@@ -5,6 +5,10 @@ import { api, patch } from "./api";
 
 type AlertItem = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
 type Overview = {
+  live: { active: boolean; streams: { streamName: string; clients: number; kbps: number; kbpsRecv: number }[]; startedAt: string | null };
+  online: number;
+  egressMbps: number;
+  today: { publishes: number; replayViews: number; newRecordingMb: number };
   server: { diskPercent: number | null; diskFreeGb: number | null; recordingTotalMb: number; recordingCount: number; liveSecondsTotal: number };
   streams: { streamName: string; clients: number; kbps: number; kbpsRecv: number }[];
   viewers: number;
@@ -76,10 +80,17 @@ export function OpsDashboard() {
       </Row>
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} md={6}><Card><Statistic title="当前观看人数" value={overview.viewers} suffix="路" /></Card></Col>
-        <Col xs={12} md={6}><Card><Statistic title="今日登录" value={overview.users.todayLogins} suffix={`/ 在线 ${overview.users.activeSessions}`} /></Card></Col>
-        <Col xs={12} md={6}><Card><Statistic title="回放存储" value={(overview.server.recordingTotalMb / 1024).toFixed(1)} suffix={`GB / ${overview.server.recordingCount} 条`} /></Card></Col>
-        <Col xs={12} md={6}><Card><Statistic title="累计直播时长" value={(overview.server.liveSecondsTotal / 3600).toFixed(1)} suffix="小时" /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic
+          title="直播实况" value={overview.live.active ? "直播中" : "空闲"}
+          valueStyle={overview.live.active ? { color: "#cf1322" } : undefined}
+          suffix={overview.live.active ? ` · ${overview.live.streams[0].kbpsRecv} kbps · ${overview.viewers} 路${overview.live.startedAt ? ` · 已播 ${Math.floor((Date.now() - new Date(overview.live.startedAt).getTime()) / 60000)} 分` : ""}` : ""}
+        /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="当前在线" value={overview.online} suffix={`人 · 今日登录 ${overview.users.todayLogins}`} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic
+          title="出口带宽(实时)" value={overview.egressMbps} suffix="Mbps"
+          valueStyle={overview.egressMbps > 4 ? { color: "#cf1322" } : overview.egressMbps > 3 ? { color: "#faad14" } : undefined}
+        /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{overview.live.active ? "观众由 CDN 承载，此为回源流量" : "空闲时应接近 0"}</Typography.Text></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title="今日运营" value={overview.today.publishes} suffix={`场 · 回放被看 ${overview.today.replayViews} 次 · 新增 ${overview.today.newRecordingMb}MB`} /></Card></Col>
       </Row>
 
       <Row gutter={[12, 12]}>
