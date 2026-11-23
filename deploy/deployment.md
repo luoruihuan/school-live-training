@@ -78,3 +78,11 @@ ssh server 'ls -la /srv/live-training/backups/'                                 
 | 20261109-01-add-istest.sql | 五表增加 isTest 测试侧标记列 | 2026-11-09（手动执行后补登记） |
 | 20261112-01-product-detail-images.sql | 商品详情介绍图表 ProductDetailImage | 未发布（随本轮功能上线） |
 | 20261112-02-coupon-minspend.sql | 优惠券满减门槛列 minSpend（0=无门槛） | 未发布（随本轮功能上线） |
+
+## 七、上海 Caddy 前置配置(2026-11-23 修复登记)
+
+- 源文件版本化:`deploy/server/caddy-live.inc`(合并进 /etc/caddy/Caddyfile 后 reload)
+- ⚠️ 教训:上游必须写 `https://127.0.0.1:8443`,**禁止写 localhost**——
+  localhost 会被解析出 IPv6([::1]),而容器端口仅监听 IPv4,
+  导致 Caddy 随机拨到 v6 → connection refused → 约 50% 请求 502(直播卡顿根因,2026-11-23)。
+- 验证方式:连续 ≥20 次 curl 主站应 100% 200(短测会漏掉间歇性故障)。
