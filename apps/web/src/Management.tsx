@@ -18,6 +18,16 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
   const [setupRoomId, setSetupRoomId] = useState<string>();
   const [preview, setPreview] = useState<{ room: Room; mode: "live" | "replay" | "mock" }>();
   const [search, setSearch] = useState("");
+  const [streamStatus, setStreamStatus] = useState<{ streamName: string; kbpsRecv: number; clients: number }[]>([]);
+  // 推流码率监控：常开轮询（10s 一次，docker 内网轻量请求）。不依赖房间状态刷新，推流开始 10 秒内码率条自动出现；开播约 30 秒后读数稳定
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => api<{ streams: { streamName: string; kbpsRecv: number; clients: number }[] }>("/rooms/live-status")
+      .then((result) => { if (!cancelled) setStreamStatus(result.streams); }).catch(() => undefined);
+    void poll();
+    const timer = setInterval(poll, 10000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
   const kind = { rooms: "room", stores: "store", products: "product", coupons: "coupon" }[tab] as EditorKind;
   const label = { rooms: "直播间", stores: "店铺", products: "商品", coupons: "优惠券" }[tab];
   return <>
@@ -31,7 +41,7 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
       ]} />}
       {tab === "rooms" && <Table<Room> rowKey="id" dataSource={data.rooms.filter((r) => r.title.includes(search))} pagination={{ pageSize: 10 }} scroll={{ x: 850 }} columns={[
         { title: "课堂名称", dataIndex: "title", render: (v: string, r: Room) => <><TestTag show={r.isTest} /><strong>{v}</strong></> }, { title: "所属店铺", render: (_, r) => r.store.name },
-        { title: "状态", render: (_, r) => <Space size={4}><RoomStatus status={r.status} /><Button type="text" size="small" aria-label="刷新直播间状态" title="刷新直播间状态" icon={<ReloadOutlined spin={data.busy} />} disabled={data.busy} onClick={() => void data.run(data.refresh, "直播间状态已刷新")} /></Space> }, { title: "操作", render: (_, r) => <Space wrap size={0}>
+        { title: "状态", render: (_, r) => { const live = streamStatus.find((s) => s.streamName === r.streamName); return <Space size={4}><RoomStatus status={r.status} />{r.status === "LIVE" && live && <BitrateTag kbps={live.kbpsRecv} />}<Button type="text" size="small" aria-label="刷新直播间状态" title="刷新直播间状态" icon={<ReloadOutlined spin={data.busy} />} disabled={data.busy} onClick={() => void data.run(data.refresh, "直播间状态已刷新")} /></Space>; } }, { title: "操作", render: (_, r) => <Space wrap size={0}>
           <Button type="link" onClick={() => setSetupRoomId(r.id)}>配置本场</Button><Button type="link" onClick={() => setPreview({ room: r, mode: "live" })}>查看课堂</Button>
         </Space> }
       ]} />}
@@ -49,16 +59,17 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
     {editor && <EntityEditor {...editor} data={data} close={() => setEditor(undefined)} />}
     {binding && <RoomProducts room={binding} data={data} close={() => setBinding(undefined)} />}
     {couponsRoom && <RoomCoupons room={couponsRoom} data={data} close={() => setCouponsRoom(undefined)} create={() => { setEditor({ kind: "coupon", roomId: couponsRoom.id }); setCouponsRoom(undefined); }} />}
-    {setupRoomId && data.rooms.find((room) => room.id === setupRoomId) && <RoomSetup room={data.rooms.find((room) => room.id === setupRoomId)!} close={() => setSetupRoomId(undefined)} edit={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setEditor({ kind: "room", entity: room }); }} bind={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setBinding(room); }} coupon={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setCouponsRoom(room); }} publish={() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; void data.run(async () => { const result = await api<{ url: string; expiresAt: string }>(`/rooms/${room.id}/publish`); setPublish({ title: room.title, ...result }); setSetupRoomId(undefined); }, "推流信息已获取"); }} preview={(mode) => { const room = data.rooms.find((item) => item.id === setupRoomId)!; setSetupRoomId(undefined); setPreview({ room, mode }); }} />}
+    {setupRoomId && data.rooms.find((room) => room.id === setupRoomId) && (() => { const room = data.rooms.find((item) => item.id === setupRoomId)!; const live = streamStatus.find((s) => s.streamName === room.streamName); return <RoomSetup room={room} bitrate={live?.kbpsRecv} close={() => setSetupRoomId(undefined)} edit={() => { setSetupRoomId(undefined); setEditor({ kind: "room", entity: room }); }} bind={() => { setSetupRoomId(undefined); setBinding(room); }} coupon={() => { setSetupRoomId(undefined); setCouponsRoom(room); }} publish={() => { void data.run(async () => { const result = await api<{ url: string; expiresAt: string }>(`/rooms/${room.id}/publish`); setPublish({ title: room.title, ...result }); setSetupRoomId(undefined); }, "推流信息已获取"); }} preview={(mode) => { setSetupRoomId(undefined); setPreview({ room, mode }); }} />; })()}
     <Modal title={preview && `${preview.room.title} · ${preview.mode === "replay" ? "课程回放" : "课堂预览（右上角关闭）"}`} open={!!preview} onCancel={() => setPreview(undefined)} footer={null} width={760} destroyOnHidden>
       {preview?.mode === "replay" ? <Replay roomId={preview.room.id} /> : preview && <>
+        {preview.mode === "live" && (() => { const live = streamStatus.find((s) => s.streamName === preview.room.streamName); return live && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}><BitrateTag kbps={live.kbpsRecv} /><span className="muted small">推流实测码率 · 开播 30 秒后读数稳定 · 超过 4500 学生端易卡顿</span></div>; })()}
         <Player roomId={preview.room.id} previewMock={preview.mode === "mock"} />
         {preview.mode === "live" && <RoomProductsPanel room={preview.room} data={data} />}
         <Chat roomId={preview.room.id} canModerate />
       </>}
     </Modal>
     <Modal title={publish?.title ? `${publish.title} · 推流设置` : "推流设置"} open={!!publish} onCancel={() => setPublish(undefined)} footer={<Button onClick={() => setPublish(undefined)}>关闭</Button>}>
-      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="info" showIcon title="请在 OBS 中选择自定义服务，填入以下信息" description="推流信息仅交给授课教师；实际结束直播请停止 OBS 推流。建议在 OBS 设置 → 输出 → 串流中把码率设为 1200~1500 Kbps（720p 教学画质足够，存储与带宽减半）。" />
+      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="warning" showIcon title="开播前，先在 OBS 设好码率（设置 → 输出）" description={<>720p 填 <b>2000</b>，1080p 填 <b>4000</b>（Kbps）——码率过高，学生观看会卡。结束直播＝停止 OBS 推流。</>} />
         <div><b>OBS 服务器</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(0, publish.url.lastIndexOf("/"))}</Typography.Paragraph></div><div><b>OBS 串流密钥</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(publish.url.lastIndexOf("/") + 1)}</Typography.Paragraph></div>
         <p className="muted">地址有效至 {new Date(publish.expiresAt).toLocaleString("zh-CN")}。过期后重新获取。</p>
       </Space>}
@@ -66,7 +77,15 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
   </>;
 }
 
-function RoomSetup({ room, close, edit, bind, coupon, publish, preview }: { room: Room; close: () => void; edit: () => void; bind: () => void; coupon: () => void; publish: () => void; preview: (mode: "live" | "replay" | "mock") => void }) {
+/** 推流码率状态：SRS 实测入站码率（含音频），≥5500 超标 / ≥4500 偏高 / 其余正常。 */
+function BitrateTag({ kbps }: { kbps: number }) {
+  const text = kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} Kbps`;
+  const level = kbps >= 5500 ? "error" : kbps >= 4500 ? "warning" : "success";
+  const label = kbps >= 5500 ? "码率超标" : kbps >= 4500 ? "码率偏高" : "码率正常";
+  return <Tag color={level}>{label} {text}</Tag>;
+}
+
+function RoomSetup({ room, close, edit, bind, coupon, publish, preview, bitrate }: { room: Room; close: () => void; edit: () => void; bind: () => void; coupon: () => void; publish: () => void; preview: (mode: "live" | "replay" | "mock") => void; bitrate?: number }) {
   const { message } = App.useApp();
   return <Modal open title={`${room.title} · 本场配置`} onCancel={close} footer={<Button onClick={close}>完成</Button>}>
     <Space orientation="vertical" className="full-width" size="middle">
@@ -74,7 +93,7 @@ function RoomSetup({ room, close, edit, bind, coupon, publish, preview }: { room
       <div className="room-setup-row"><span>课堂信息</span><RoomStatus status={room.status} /><Button onClick={edit}>编辑课堂</Button></div>
       <div className="room-setup-row"><span>本场商品</span><Tag color={room.productCount ? "green" : "orange"}>{room.productCount ? `${room.productCount} 件已绑定` : "待配置"}</Tag><Button onClick={bind}>配置商品</Button></div>
       <div className="room-setup-row"><span>优惠券（可选）</span><Tag>{room.couponCount} 张</Tag><Button onClick={coupon}>设置优惠券</Button></div>
-      <div className="room-setup-row"><span>教师推流</span><Button icon={<VideoCameraOutlined />} onClick={publish}>获取 OBS 设置</Button></div>
+      <div className="room-setup-row"><span>教师推流</span>{bitrate !== undefined && <BitrateTag kbps={bitrate} />}<Button icon={<VideoCameraOutlined />} onClick={publish}>获取 OBS 设置</Button></div>
       <div className="room-setup-row"><span>学生入口</span><Button icon={<LinkOutlined />} onClick={() => void navigator.clipboard.writeText(`${location.origin}/?room=${room.id}`).then(() => message.success("课堂链接已复制")).catch(() => message.error("复制失败，请复制浏览器地址"))}>复制观看链接</Button></div>
       {import.meta.env.DEV && <div className="room-setup-row"><span>本地视频演示</span><Button onClick={() => preview("mock")}>用桌面 MP4 预览</Button></div>}
       <div className="room-setup-row"><span>课程回放</span><Tag>{room.recordingCount} 条可看</Tag><Button onClick={() => preview("replay")}>查看回放</Button></div>

@@ -120,6 +120,21 @@ export class BusinessController {
     return rooms.map(({ _count, ...room }) => ({ ...room, productCount: _count.products, couponCount: _count.coupons, recordingCount: _count.recordings }));
   }
 
+  /** 推流码率监控：SRS 实测入站码率（含音频）。管理端开播后核对 OBS 设置用，10 秒级轮询、docker 内网请求。 */
+  @Get("rooms/live-status")
+  async liveStatus(@Req() request: UserRequest) {
+    requireStaff(request.currentUser);
+    try {
+      const response = await fetch("http://srs:1985/api/v1/streams", { signal: AbortSignal.timeout(3000) });
+      if (!response.ok) return { streams: [] as { streamName: string; kbpsRecv: number; clients: number }[] };
+      // SRS 6：clients 含推流者本身（减 1 为观众数）；recv_30s 为推流端上行 30 秒平均码率（Kbps）
+      const data = await response.json() as { streams?: { name?: string; clients?: number; kbps?: { recv_30s?: number } }[] };
+      return { streams: (data.streams ?? []).map((stream) => ({ streamName: stream.name ?? "", kbpsRecv: Math.round(stream.kbps?.recv_30s ?? 0), clients: Math.max(0, (stream.clients ?? 0) - 1) })).filter((stream) => stream.streamName) };
+    } catch {
+      return { streams: [] as { streamName: string; kbpsRecv: number; clients: number }[] };
+    }
+  }
+
   @Patch("stores/:id")
   async updateStore(@Req() request: UserRequest, @Param("id") id: string, @Body() body: unknown) {
     requireStaff(request.currentUser);

@@ -5,6 +5,7 @@ export type Store = { id: string; name: string; description: string; isTest?: bo
 export type Room = {
   id: string;
   storeId: string;
+  streamName: string;
   title: string;
   isTest?: boolean;
   status: "DRAFT" | "READY" | "LIVE" | "ENDED";
@@ -16,6 +17,7 @@ export type Room = {
 export type Product = {
   id: string;
   storeId: string;
+  streamName: string;
   name: string;
   isTest?: boolean;
   description: string;
