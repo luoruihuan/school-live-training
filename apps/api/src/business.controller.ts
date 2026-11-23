@@ -190,7 +190,7 @@ export class BusinessController {
     const expire = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
     const token = publishToken(room.streamName, expire);
     return {
-      url: `rtmp://${domain}:1935/live/${room.streamName}?token=${token}&expire=${expire}`,
+      url: `rtmp://${domain}:2095/live/${room.streamName}?token=${token}&expire=${expire}`,
       expiresAt: new Date(expire * 1000).toISOString()
     };
   }
