@@ -11,6 +11,8 @@ type Playback = { status: "DRAFT" | "READY" | "LIVE" | "ENDED"; hls: string; flv
 export function Player({ roomId, previewMock = false }: { roomId: string; previewMock?: boolean }) {
   const mock = import.meta.env.DEV && (previewMock || new URLSearchParams(location.search).get("mock") === "1");
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 弱网自愈：stall 超过 6 秒才提示（瞬时卡顿 hls.js 会自动追上，不打扰用户）；恢复播放时清除计时
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [error, setError] = useState("");
   const [idleStatus, setIdleStatus] = useState<Playback["status"] | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -58,9 +60,16 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
         const { default: Hls } = await import("hls.js");
         if (cancelled) return;
         if (Hls.isSupported()) {
-          hlsPlayer = new Hls({ liveSyncDurationCount: 2 });
+          hlsPlayer = new Hls({ liveSyncDurationCount: 2, enableWorker: true });
+          // 弱网自愈：致命错误后台自动恢复（官方策略：网络错误 startLoad 重连、媒体错误 recoverMediaError），
+          // 短时间内反复失败才提示手动重连；老师真停播走 socket 的“直播已结束”遮罩，不依赖错误提示。
+          let hlsRecoveries = 0;
           hlsPlayer.on(Hls.Events.ERROR, (_event, data) => {
-            if (data.fatal && !cancelled) setError("直播暂时不可用，教师可能尚未开播或网络已中断，请稍后重试。");
+            if (!data.fatal || cancelled) return;
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { hlsPlayer?.recoverMediaError(); return; }
+            hlsRecoveries += 1;
+            if (hlsRecoveries > 5) { setError("直播暂时不可用，网络已中断，请点击重新连接。"); return; }
+            setTimeout(() => { if (!cancelled) hlsPlayer?.startLoad(); }, 2000);
           });
           hlsPlayer.loadSource(hls);
           hlsPlayer.attachMedia(video);
@@ -68,30 +77,37 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
           setError("当前浏览器不支持直播播放，请使用新版 Chrome 或 Safari。");
         }
       };
-      const { default: mpegts } = await import("mpegts.js");
-      if (cancelled) return;
-      // Chrome/Edge 等现代浏览器一律优先 mpegts.js 播 FLV（低延迟）；
-      // 原生 HLS 仅作为不支持 mpegts.js 的浏览器（如部分 Safari）的兜底。
-      if (mpegts.isSupported()) {
-        flvPlayer = mpegts.createPlayer({ type: "flv", isLive: true, url: flv }, { enableStashBuffer: false });
-        flvPlayer.attachMediaElement(video);
-        flvPlayer.on(mpegts.Events.ERROR, () => {
-          flvPlayer?.destroy();
-          flvPlayer = undefined;
-          void startHls().catch(() => { if (!cancelled) setError("备用播放器加载失败，请重新连接。"); });
-        });
-        flvPlayer.load();
-        void flvPlayer.play()?.catch(() => { /* 浏览器可要求用户主动点击播放 */ });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // HLS 优���：切片是静态文件，CDN 边缘可缓存共享，源站回源恒定约一路，观看人数不受源站带宽限制；
+      // 延迟约 6~10 秒（SRS 官方 realtime 配置 hls_fragment=2 的预期值），聊天互动走 socket.io 实时不受影响。
+      // 原生 HLS（iOS Safari/iOS 微信 WKWebView）最稳；其余 MSE 浏览器（Chrome/Edge/安卓微信 XWeb）用 hls.js；
+      // 两者都不支持时才回退 mpegts.js 播 FLV（长连接直连，多人观看会占源站带宽）。
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
         await startHls();
+        void video.play()?.catch(() => { /* 浏览器可要求用户主动点击播放 */ });
       } else {
-        setError("当前浏览器不支持直播播放，请使用新版 Chrome 或 Safari。");
+        const { default: Hls } = await import("hls.js");
+        if (cancelled) return;
+        if (Hls.isSupported()) {
+          await startHls();
+        } else {
+          const { default: mpegts } = await import("mpegts.js");
+          if (cancelled) return;
+          if (mpegts.isSupported()) {
+            flvPlayer = mpegts.createPlayer({ type: "flv", isLive: true, url: flv }, { enableStashBuffer: false });
+            flvPlayer.attachMediaElement(video);
+            flvPlayer.load();
+            void flvPlayer.play()?.catch(() => { /* 浏览器可要求用户主动点击播放 */ });
+          } else {
+            setError("当前浏览器不支持直播播放，请使用新版 Chrome 或 Safari。");
+          }
+        }
       }
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : "获取播放地址失败");
     });
     return () => {
       cancelled = true;
+      if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = undefined; }
       flvPlayer?.destroy();
       hlsPlayer?.destroy();
       video.removeAttribute("src");
@@ -101,7 +117,7 @@ export function Player({ roomId, previewMock = false }: { roomId: string; previe
 
   const portrait = !!ratio && ratio.h > ratio.w;
   return <div className={`player${portrait ? " player--portrait" : ""}`}>
-    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} style={portrait ? { height: "min(74vh, 720px)", width: "auto", maxWidth: "100%", aspectRatio: ratio ? `${ratio.w} / ${ratio.h}` : "9 / 16" } : { aspectRatio: ratio ? `${ratio.w} / ${ratio.h}` : "16 / 9" }} onLoadedMetadata={(event) => { const target = event.currentTarget; if (target.videoWidth && target.videoHeight) setRatio({ w: target.videoWidth, h: target.videoHeight }); }} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { setError(""); setIdleStatus(null); }} onStalled={() => { if (!mock && !error && idleStatus !== "ENDED") setError("直播信号中断，正在等待画面恢复…"); }} />
+    <video ref={videoRef} controls playsInline webkit-playsinline x5-playsinline x-webkit-airplay="allow" autoPlay muted loop={mock} src={mock ? "/mock/new-year.mp4" : undefined} style={portrait ? { height: "min(74vh, 720px)", width: "auto", maxWidth: "100%", aspectRatio: ratio ? `${ratio.w} / ${ratio.h}` : "9 / 16" } : { aspectRatio: ratio ? `${ratio.w} / ${ratio.h}` : "16 / 9" }} onLoadedMetadata={(event) => { const target = event.currentTarget; if (target.videoWidth && target.videoHeight) setRatio({ w: target.videoWidth, h: target.videoHeight }); }} onError={() => setError(mock ? "本地演示视频未找到，请确认桌面的新年视频mp4.mp4仍在原位置。" : "暂时无法播放，请确认教师已开播后重试。")} onPlaying={() => { if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = undefined; } setError(""); setIdleStatus(null); }} onStalled={() => { if (!mock && !error && idleStatus !== "ENDED") { if (stallTimer.current) clearTimeout(stallTimer.current); stallTimer.current = setTimeout(() => setError("直播信号中断，正在等待画面恢复…"), 6000); } }} />
     {idleStatus && !mock && !error && <div className="player__idle" aria-live="polite">
       <span className="player__idle-badge">{idleStatus === "ENDED" ? "已结束" : "未开播"}</span>
       {idleStatus === "ENDED" ? <PauseCircleOutlined className="player__idle-icon" /> : <VideoCameraOutlined className="player__idle-icon" />}
