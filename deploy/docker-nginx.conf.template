@@ -39,6 +39,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         add_header Cache-Control "no-store" always;
     }
+    # HLS 切片是不可变静态文件（URL 含序号）：允许 CDN/浏览器缓存，观众共享缓存后源站回源恒定约一路；
+    # m3u8/FLV 保持 no-cache（索引需实时，FLV 是长连接流）。必须放前缀 location 之前，正则优先匹配。
+    location ~ ^/live/.+\.(ts|m4s)$ {
+        proxy_pass http://srs:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=86400" always;
+        add_header X-Content-Type-Options nosniff always;
+    }
     location /live/ {
         proxy_pass http://srs:8080/live/;
         proxy_http_version 1.1;
