@@ -12,7 +12,7 @@ import { AuditService } from "./audit.service.js";
 import { cdnTypeAUrl, cdnLiveDomain, replayCdnDomain } from "./cloud-config.js";
 const audit = { log: async () => undefined } as unknown as AuditService;
 
-const room = { id: "test-room", streamName: "test-stream" };
+const room: { id: string; streamName: string; lastEventAt?: Date } = { id: "test-room", streamName: "test-stream" };
 const prisma = {
   room: { findUnique: async ({ where }: { where: { id: string } }) => where.id === room.id ? room : null },
   recording: { findMany: async () => [], findUnique: async () => null },
@@ -90,6 +90,18 @@ test("直播播放地址：配置 CDN 且开关开启后走 CDN，未配置回�
   assert.equal(cdn.flv, "https://live-cdn.example.com/live/test-stream.flv");
   assert.equal(cdn.hls, "https://live-cdn.example.com/live/test-stream.m3u8");
 });
+
+test("直播播放地址使用最近推流事件区分 HLS 缓存会话", async (t) => {
+  const previous = process.env;
+  const previousEvent = room.lastEventAt;
+  t.after(() => { process.env = previous; room.lastEventAt = previousEvent; });
+  process.env = { ...previous, APP_DOMAIN: "origin.demo-school.cn", CDN_LIVE_DOMAIN: "live-cdn.example.com" };
+  room.lastEventAt = new Date("2026-11-23T14:39:43.940Z");
+  const controller = new BusinessController(prisma, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
+  const result = await controller.playbackAddress(room.id, teacher);
+  assert.equal(result.hls, "https://live-cdn.example.com/live/test-stream.m3u8?session=1795444783940");
+});
+
 
 test("回放播放地址：回放 CDN 开关开启后直连 CDN 且观看仍只记一次，未配置回退 API 代理", async (t) => {
   const previous = process.env;

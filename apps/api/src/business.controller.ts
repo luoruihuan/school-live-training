@@ -202,10 +202,11 @@ export class BusinessController {
     // 直播 CDN：环境变量能力 × 超管开关；未开启时观众直连源站。
     const { live: liveCdnHost } = await effectiveCdnDomains(this.prisma);
     const host = liveCdnHost ?? domain;
+    const hlsSession = room.lastEventAt instanceof Date ? `?session=${room.lastEventAt.getTime()}` : "";
     return {
       status: room.status,
       flv: `https://${host}/live/${room.streamName}.flv`,
-      hls: `https://${host}/live/${room.streamName}.m3u8`,
+      hls: `https://${host}/live/${room.streamName}.m3u8${hlsSession}`,
       expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
     };
   }
