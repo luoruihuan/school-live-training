@@ -10,6 +10,8 @@ import { AuditService } from "./audit.service.js";
 import { ChatGateway } from "./chat.gateway.js";
 import { cdnLiveDomain, replayCdnDomain, REPLAY_URL_TTL_SECONDS } from "./cloud-config.js";
 import { CDN_LIVE_SWITCH, REPLAY_CDN_SWITCH, cdnSwitches } from "./system-settings.js";
+import { cssSetupError } from "./css-config.js";
+import { changeLiveProvider, readLiveRoute } from "./live-route.js";
 
 type Alert = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
 
@@ -47,8 +49,10 @@ export class OpsController {
   @Get("settings")
   async settings(@Req() request: UserRequest) {
     requireSuperAdmin(request.currentUser);
-    const switches = await cdnSwitches(this.prisma);
+    const [switches, route] = await Promise.all([cdnSwitches(this.prisma), readLiveRoute(this.prisma)]);
+    const cssError = cssSetupError();
     return {
+      liveProvider: { value: route.provider, cssConfigured: !cssError, cssError },
       cdnLive: this.cdnStatus(switches.live, cdnLiveDomain, "CDN_LIVE_DOMAIN"),
       replayCdn: {
         ...this.cdnStatus(switches.replay, replayCdnDomain, "REPLAY_CDN_DOMAIN"),
@@ -89,17 +93,35 @@ export class OpsController {
     return this.settings(request);
   }
 
+  @Patch("live-provider")
+  async updateLiveProvider(@Req() request: UserRequest, @Body() body: unknown) {
+    requireSuperAdmin(request.currentUser);
+    const provider = object(body).provider;
+    if (provider !== "SRS" && provider !== "CSS") throw new BadRequestException("直播线路参数不正确");
+    if (provider === "CSS") {
+      const configError = cssSetupError();
+      if (configError) throw new BadRequestException(configError);
+    }
+    const before = await changeLiveProvider(this.prisma, provider);
+    if (before !== provider) await this.audit.log({
+      action: "LIVE_PROVIDER_SWITCH", actorName: request.currentUser.displayName, request,
+      detail: `${request.currentUser.displayName} 切换直播线路：${before} → ${provider}`
+    });
+    return this.settings(request);
+  }
+
   @Get("overview")
   async overview(@Req() request: UserRequest) {
     requireSuperAdmin(request.currentUser);
     void (request as Request);
 
-    const [diskPercent, streams, mysqlOk, srsOk, minioOk] = await Promise.all([
+    const [diskPercent, streams, mysqlOk, srsOk, minioOk, { provider }] = await Promise.all([
       this.storage.diskUsagePercent(),
       this.liveStreams().catch(() => [] as { streamName: string; clients: number; kbps: number; kbpsRecv: number }[]),
       tcpProbe("mysql", 3306),
       tcpProbe("srs", 1985),
-      tcpProbe("minio", 9000)
+      tcpProbe("minio", 9000),
+      readLiveRoute(this.prisma)
     ]);
 
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -132,11 +154,11 @@ export class OpsController {
         title: `推流码率偏高（${stream.kbpsRecv} kbps，建议 1200~1500）`,
         message: "请在 OBS 设置 → 输出 → 串流中把码率降到 1200~1500 Kbps：观众走 CDN 不限路数，但码率直接决定 CDN 流量费与回放存储，降低可省一半以上成本。"
       })),
-      ...streams.length === 0 && egress > EGRESS_IDLE_DANGER
+      ...provider === "SRS" && streams.length === 0 && egress > EGRESS_IDLE_DANGER
         ? [{ key: "egress-idle", level: "danger" as const, title: `当前无直播，但服务器出口流量 ${egress} Mbps`, message: "CDN 模式下空闲时出口应接近 0。请检查：是否有观众在直连源站（CDN 开关被关闭？）、是否有异常流量消耗带宽包。" }] : [],
-      ...streams.length > 0 && egress > EGRESS_LIVE_WARN
+      ...provider === "SRS" && streams.length > 0 && egress > EGRESS_LIVE_WARN
         ? [{ key: "egress-live", level: "warn" as const, title: `直播中出口流量 ${egress} Mbps，接近 5Mbps 带宽上限`, message: "出口≈回源路数×码率：观众集中时应在 1~3Mbps。偏高说明 CDN 回源路数多或存在直连，请检查 CDN 开关与观众分布。" }] : [],
-      ...streams.length > 0 && egress <= EGRESS_LIVE_WARN
+      ...provider === "SRS" && streams.length > 0 && egress <= EGRESS_LIVE_WARN
         ? [{ key: "egress-live", level: "ok" as const, title: `直播中出口 ${egress} Mbps（回源正常，观众由 CDN 承载）`, message: "服务器只出回源流量，带宽上限 5Mbps，当前余量充足。" }] : [],
       diskPercent === null
         ? { key: "disk", level: "warn", title: "磁盘使用率读取失败", message: "API 容器无法读取数据卷所在文件系统，请人工检查。" }
@@ -160,9 +182,11 @@ export class OpsController {
 
     return {
       live: {
-        active: streams.length > 0,
+        provider,
+        active: provider === "CSS" ? liveRooms.length > 0 : streams.length > 0,
         streams,
-        startedAt: (await this.prisma.room.findFirst({ where: { status: "LIVE" }, orderBy: { lastPublishAt: "desc" }, select: { lastPublishAt: true } }))?.lastPublishAt?.toISOString() ?? null
+        startedAt: liveRooms.reduce<Date | null>((latest, room) =>
+          room.lastPublishAt && (!latest || room.lastPublishAt > latest) ? room.lastPublishAt : latest, null)?.toISOString() ?? null
       },
       online: this.chat.onlineConnections(),
       egressMbps: egress,

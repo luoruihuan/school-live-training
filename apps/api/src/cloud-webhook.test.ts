@@ -30,6 +30,9 @@ test("SRS 推流回调校验 token：合法放行、无效拒绝、过期拒绝"
   let status = "ENDED";
   const broadcasts: string[] = [];
   const prisma = {
+    $transaction: async (work: (tx: PrismaService) => Promise<unknown>) => work(prisma),
+    $executeRaw: async () => 1,
+    systemSetting: { findUnique: async () => null },
     room: {
       findUnique: async () => ({ id: "room1" }),
       updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; }

@@ -73,6 +73,8 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
+    # SRS 走 Docker 内网直接访问 API。外网只接收验签的 CSS 通知。
+    location ~* ^/api/webhooks/srs/?$ { return 404; }
     location /api/ {
         proxy_pass http://api:3000;
         proxy_set_header Host $host;

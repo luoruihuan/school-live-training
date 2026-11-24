@@ -14,10 +14,12 @@ const audit = { log: async () => undefined } as unknown as AuditService;
 
 const room: { id: string; streamName: string; lastEventAt?: Date } = { id: "test-room", streamName: "test-stream" };
 const prisma = {
+  $transaction: async (work: (tx: PrismaService) => Promise<unknown>) => work(prisma),
+  $executeRaw: async () => 1,
   room: { findUnique: async ({ where }: { where: { id: string } }) => where.id === room.id ? room : null },
   recording: { findMany: async () => [], findUnique: async () => null },
   serviceQuota: { findUnique: async () => null },
-  systemSetting: { findMany: async () => [{ key: "cdnLiveEnabled", value: "true" }, { key: "replayCdnEnabled", value: "true" }] }
+  systemSetting: { findUnique: async () => null, findMany: async () => [{ key: "cdnLiveEnabled", value: "true" }, { key: "replayCdnEnabled", value: "true" }] }
 } as unknown as PrismaService;
 const teacher = { currentUser: { role: "TEACHER" } } as UserRequest;
 const student = { currentUser: { role: "STUDENT" } } as UserRequest;
@@ -142,7 +144,7 @@ test("CDN 开关：开启后直播与回放走 CDN，关闭立即回退直连", 
   const switchPrisma = {
     room: { findUnique: async () => ({ id: room.id, streamName: room.streamName, status: "ENDED" }) },
     recording: { findUnique: async () => cdnRecording, update: async () => ({}) },
-    systemSetting: { findMany: async () => rows }
+    systemSetting: { findUnique: async () => null, findMany: async () => rows }
   } as unknown as PrismaService;
   const viewer = { currentUser: { id: "u1", displayName: "同学", role: "STUDENT" } } as UserRequest;
 
@@ -175,7 +177,7 @@ test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启"
   const upserts: { key: string; value: string }[] = [];
   let auditCalls = 0;
   const opsPrisma = {
-    systemSetting: { findMany: async () => [...upserts], upsert: async ({ create }: { create: { key: string; value: string } }) => { upserts.push(create); return create; } },
+    systemSetting: { findUnique: async () => null, findMany: async () => [...upserts], upsert: async ({ create }: { create: { key: string; value: string } }) => { upserts.push(create); return create; } },
     $transaction: async (operations: Promise<unknown>[]) => { for (const op of operations) await op; }
   } as unknown as PrismaService;
   const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService, { onlineConnections: () => 0 } as never);

@@ -36,12 +36,13 @@ test("草稿课堂在服务端不能被学生列表、观看、回放和领券�
   await assert.rejects(new CommerceController(prisma, audit).claimCoupon(student, "coupon-1"), /直播间不存在/);
 });
 
-test("播放签名与腾讯云 1 秒 Key 有效时间合计为四小时", async (t) => {
+test("SRS 播放保持原有地址与四小时响应有效期", async (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, APP_DOMAIN: "live.school.test" };
   const prisma = {
     room: { findUnique: async () => ({ id: "room-1", status: "READY", streamName: "stream-1" }) },
+    systemSetting: { findUnique: async () => null },
     serviceQuota: { findUnique: async () => ({ id: 1, startDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10), annualGb: 10000 }) },
     usageDaily: { findMany: async () => [] }
   } as unknown as PrismaService;
@@ -71,7 +72,9 @@ test("跨站写请求无法用表单或伪造来源触发，云回调保留独�
     assert.deepEqual(call("POST", "/api/users/student-1/points", "https://classroom.example.com"), { nextCalled: false, status: 403 });
     assert.deepEqual(call("POST", "/api/users/student-1/points", "https://classroom.example.com", "1"), { nextCalled: true, status: 0 });
     assert.deepEqual(call("POST", "/api/webhooks/srs"), { nextCalled: true, status: 0 });
-    assert.deepEqual(call("POST", "/api/webhooks/css").status, 403);
+    assert.deepEqual(call("POST", "/api/webhooks/css"), { nextCalled: true, status: 0 });
+    assert.equal(call("PATCH", "/api/webhooks/css").status, 403);
+    assert.equal(call("PATCH", "/api/ops/live-provider").status, 403);
   } finally { if (previous === undefined) delete process.env.APP_ORIGIN; else process.env.APP_ORIGIN = previous; }
 });
 

@@ -4,8 +4,9 @@ import { ReloadOutlined } from "@ant-design/icons";
 import { api, patch } from "./api";
 
 type AlertItem = { key: string; level: "ok" | "warn" | "danger"; title: string; message: string };
+type LiveProvider = "SRS" | "CSS";
 type Overview = {
-  live: { active: boolean; streams: { streamName: string; clients: number; kbps: number; kbpsRecv: number }[]; startedAt: string | null };
+  live: { provider: LiveProvider; active: boolean; streams: { streamName: string; clients: number; kbps: number; kbpsRecv: number }[]; startedAt: string | null };
   online: number;
   egressMbps: number;
   today: { publishes: number; replayViews: number; newRecordingMb: number };
@@ -19,12 +20,18 @@ type Overview = {
 type AuditRow = { id: string; actorName: string; action: string; detail: string; ip: string | null; createdAt: string };
 type LogsPage = { items: AuditRow[]; total: number; page: number; pageSize: number; actions: { action: string; count: number }[] };
 type CdnStatus = { enabled: boolean; configured: boolean; domain: string | null; error: string | null; expectedAuthTtlSeconds?: number };
-type Settings = { cdnLive: CdnStatus; replayCdn: CdnStatus };
+type Settings = {
+  liveProvider: { value: LiveProvider; cssConfigured: boolean; cssError: string | null };
+  cdnLive: CdnStatus;
+  replayCdn: CdnStatus;
+};
+
+const providerLabel: Record<LiveProvider, string> = { SRS: "上海自建（SRS）", CSS: "腾讯云标准直播（CSS）" };
 
 const actionText: Record<string, string> = {
   LOGIN: "登录成功", LOGIN_FAILED: "登录失败", LOGOUT: "退出登录", PASSWORD_CHANGED: "修改密码", PASSWORD_RESET: "重置密码",
   USER_CREATED: "创建账号", USER_DISABLED: "停用账号", USER_ENABLED: "启用账号", POINTS_ADJUST: "积分调整",
-  PUBLISH_START: "开始直播", PUBLISH_STOP: "结束直播", RECORDING_SAVED: "回放入库", REPLAY_PLAYED: "观看回放", PRODUCT_ADDED: "添加商品", PRODUCT_REMOVED: "移除商品", CDN_SWITCH: "CDN 切换", ORDER_COMPLETED: "订单完成"
+  PUBLISH_START: "开始直播", PUBLISH_STOP: "结束直播", RECORDING_SAVED: "回放入库", REPLAY_PLAYED: "观看回放", PRODUCT_ADDED: "添加商品", PRODUCT_REMOVED: "移除商品", CDN_SWITCH: "CDN 切换", LIVE_PROVIDER_SWITCH: "直播线路切换", ORDER_COMPLETED: "订单完成"
 };
 
 const alertStyle = { ok: { type: "success" as const, color: "green" }, warn: { type: "warning" as const, color: "orange" }, danger: { type: "error" as const, color: "red" } };
@@ -68,6 +75,19 @@ export function OpsDashboard() {
     }
   }
 
+  async function selectLiveProvider(provider: LiveProvider): Promise<void> {
+    setSwitching("liveProvider");
+    try {
+      setSettings(await patch<Settings>("/ops/live-provider", { provider }));
+      void message.success(`已切换为${providerLabel[provider]}`);
+      await refresh();
+    } catch (reason) {
+      void message.error(reason instanceof Error ? reason.message : "切换直播线路失败");
+    } finally {
+      setSwitching(null);
+    }
+  }
+
   return <Space direction="vertical" size="middle" style={{ width: "100%" }}>
     {error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => void refresh()}>重试</Button>} />}
     {loading && !overview ? <div style={{ padding: 80, textAlign: "center" }}><Spin size="large" /></div> : overview && <>
@@ -83,7 +103,10 @@ export function OpsDashboard() {
         <Col xs={12} md={6}><Card size="small" className="ops-stat">
           <div className="ops-stat__label">直播实况</div>
           <div className="ops-stat__value">{overview.live.active ? <span className="ops-stat__live">● 直播中</span> : "空闲"}</div>
-          <div className="ops-stat__sub">{overview.live.active ? `${overview.live.streams[0].kbpsRecv} kbps · ${overview.viewers} 路${overview.live.startedAt ? ` · 已播 ${Math.floor((Date.now() - new Date(overview.live.startedAt).getTime()) / 60000)} 分钟` : ""}` : "当前没有正在进行的直播"}</div>
+          <div className="ops-stat__sub">{overview.live.active ? <>
+            {overview.live.provider === "CSS" ? "由腾讯云 CSS 分发" : `${overview.live.streams[0]?.kbpsRecv ?? "—"} kbps · ${overview.viewers} 路`}
+            {overview.live.startedAt ? ` · 已播 ${Math.max(0, Math.floor((Date.now() - new Date(overview.live.startedAt).getTime()) / 60000))} 分钟` : ""}
+          </> : "当前没有正在进行的直播"}</div>
         </Card></Col>
         <Col xs={12} md={6}><Card size="small" className="ops-stat">
           <div className="ops-stat__label">当前在线</div>
@@ -93,7 +116,7 @@ export function OpsDashboard() {
         <Col xs={12} md={6}><Card size="small" className="ops-stat">
           <div className="ops-stat__label">出口带宽(实时)</div>
           <div className="ops-stat__value" style={overview.egressMbps > 4 ? { color: "#cf1322" } : overview.egressMbps > 3 ? { color: "#faad14" } : undefined}>{overview.egressMbps} <small>Mbps</small></div>
-          <div className="ops-stat__sub">{overview.live.active ? "观众由 CDN 承载,此为回源流量" : "空闲时应接近 0"}</div>
+          <div className="ops-stat__sub">{overview.live.provider === "CSS" ? "应用服务器公网出口" : overview.live.active ? "观众由 CDN 承载，此为回源流量" : "空闲时应接近 0"}</div>
         </Card></Col>
         <Col xs={12} md={6}><Card size="small" className="ops-stat">
           <div className="ops-stat__label">今日运营</div>
@@ -113,24 +136,39 @@ export function OpsDashboard() {
           <Card title="服务状态">
             <Space wrap>{overview.services.map((service) => <Tag key={service.name} color={service.ok ? "green" : "red"}>{service.ok ? "●" : "○"} {service.name}</Tag>)}</Space>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
-              {overview.streams.length ? overview.streams.map((stream) => `${stream.streamName.slice(-6)}（${stream.clients} 路 · 推流 ${stream.kbpsRecv} kbps）`).join("；") : "当前没有正在进行的直播"}
+              {overview.live.provider === "CSS" ? "在腾讯云云直播控制台查看 CSS 推流数据。" : overview.streams.length ? overview.streams.map((stream) => `${stream.streamName.slice(-6)}（${stream.clients} 路 · 推流 ${stream.kbpsRecv} kbps）`).join("；") : "当前没有正在进行的直播"}
             </Typography.Paragraph>
           </Card>
         </Col>
         <Col xs={24} md={12}>
-          <Card title="CDN 分发开关" extra={overview ? <Typography.Text type={overview.viewers >= 10 ? "danger" : "secondary"}>当前 {overview.viewers} 路观看{overview.viewers >= 10 ? "，建议开启" : ""}</Typography.Text> : null}>
+          <Card title="直播线路">
+            {settings ? <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Select aria-label="直播线路" value={settings.liveProvider.value} loading={switching === "liveProvider"}
+                disabled={switching !== null || overview.live.active} style={{ width: "100%" }}
+                options={([
+                  { value: "SRS", label: providerLabel.SRS },
+                  { value: "CSS", label: providerLabel.CSS, disabled: !settings.liveProvider.cssConfigured }
+                ] satisfies { value: LiveProvider; label: string; disabled?: boolean }[])}
+                onChange={(provider) => void selectLiveProvider(provider)} />
+              <Typography.Text type="secondary">{overview.live.active ? "有课堂正在直播，停播后可切换。" : "切换后，请教师开播前重新获取 OBS 设置。"}</Typography.Text>
+              {settings.liveProvider.cssError && <Typography.Text type="secondary">{settings.liveProvider.cssError}</Typography.Text>}
+            </Space> : <Spin />}
+          </Card>
+        </Col>
+        <Col xs={24} md={12}>
+          <Card title="CDN 分发开关" extra={overview.live.provider === "SRS" ? <Typography.Text type={overview.viewers >= 10 ? "danger" : "secondary"}>当前 {overview.viewers} 路观看{overview.viewers >= 10 ? "，建议开启" : ""}</Typography.Text> : null}>
             {settings ? <Space direction="vertical" size={8} style={{ width: "100%" }}>
               {([
-                { key: "cdnLive" as const, label: "直播走 CDN", field: "cdnLiveEnabled" as const, hint: "观众从国内边缘节点拉流，服务器只出回源路数" },
+                { key: "cdnLive" as const, label: "上海自建直播走 CDN", field: "cdnLiveEnabled" as const, hint: "仅用于上海自建线路，观众从 CDN 拉流" },
                 { key: "replayCdn" as const, label: "回放走 CDN", field: "replayCdnEnabled" as const, hint: "回放直连 COS 加速域名，不再经服务器代理" }
               ]).map(({ key, label, field, hint }) => {
                 const status = settings[key];
                 return <div key={field} className="cdn-switch-row">
-                  <div className="cdn-switch-row__head"><Typography.Text strong={status.enabled}>{label}</Typography.Text><Switch size="small" loading={switching === field} disabled={!status.configured} checked={status.enabled} onChange={(value) => void toggleCdn(field, value, label)} /></div>
+                  <div className="cdn-switch-row__head"><Typography.Text strong={status.enabled}>{label}</Typography.Text><Switch size="small" loading={switching === field} disabled={switching !== null || !status.configured} checked={status.enabled} onChange={(value) => void toggleCdn(field, value, label)} /></div>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>{status.error ?? (status.configured ? `${hint}（${status.domain}${status.expectedAuthTtlSeconds ? `，控制台 TypeA 有效时长需为 ${status.expectedAuthTtlSeconds} 秒` : ""}）` : "未配置：请在服务器 .env 设置对应域名并重新部署后可开启")}</Typography.Text>
                 </div>;
               })}
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>人少可关闭节省 CDN 流量费（按量计费）；超过 12 路观看建议开启，否则源站 30Mbps 带宽会打满。切换立即生效，已进入课堂的观众不受影响，操作会记入日志。</Typography.Paragraph>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>上海自建线路的源站出口为 5 Mbps，多人观看请开启直播 CDN。修改会记入操作日志。</Typography.Paragraph>
             </Space> : <Spin />}
           </Card>
         </Col>

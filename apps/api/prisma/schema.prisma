@@ -92,9 +92,30 @@ model Room {
   products     RoomProduct[]
   messages     ChatMessage[]
   recordings   Recording[]
+  cssStreams   CssStream[]
   mutes        RoomMute[]
   coupons      Coupon[]
   @@index([storeId])
+}
+
+// 流名随 CSS 线路启用批次更新。保留旧流与课堂的关联，供迟到的录制通知使用。
+model CssStream {
+  id             String   @id @db.VarChar(32)
+  roomId         String
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  routeVersion   String   @db.VarChar(32)
+  activeSequence String?  @db.VarChar(64)
+  lastStatusAt   DateTime?
+  events         CssPushEvent[]
+  @@unique([roomId, routeVersion])
+}
+
+model CssPushEvent {
+  streamId  String    @db.VarChar(32)
+  stream    CssStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  sequence  String    @db.VarChar(64)
+  eventType Int       @db.UnsignedTinyInt
+  @@id([streamId, sequence, eventType])
 }
 
 model Product {

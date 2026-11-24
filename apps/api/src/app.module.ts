@@ -7,6 +7,7 @@ import { CommerceController } from "./commerce.controller.js";
 import { ChatGateway } from "./chat.gateway.js";
 import { ChatController } from "./chat.controller.js";
 import { CloudWebhookController } from "./cloud-webhook.controller.js";
+import { CssWebhookController } from "./css-webhook.controller.js";
 import { RecordingController } from "./recording.controller.js";
 import { StorageService } from "./storage.service.js";
 import { AlertService } from "./alert.service.js";
@@ -17,7 +18,7 @@ import { OpsController } from "./ops.controller.js";
 import { AccountController } from "./account.controller.js";
 import { HealthController } from "./health.controller.js";
 @Module({
-  controllers: [OpsController, AuthController, BusinessController, CommerceController, ChatController, CloudWebhookController, RecordingController, UploadController, AccountController, HealthController],
+  controllers: [OpsController, AuthController, BusinessController, CommerceController, ChatController, CloudWebhookController, CssWebhookController, RecordingController, UploadController, AccountController, HealthController],
   providers: [PrismaService, AuthService, AuthGuard, ChatGateway, StorageService, AlertService, AuditService]
 })
 export class AppModule {}

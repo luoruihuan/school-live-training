@@ -8,6 +8,7 @@ import { ChatGateway } from "./chat.gateway.js";
 import { AlertService } from "./alert.service.js";
 import { recordingRetentionDays } from "./cloud-config.js";
 import { AuditService } from "./audit.service.js";
+import { withLiveRoute } from "./live-route.js";
 
 const SRS_RAW_DIR = "/var/srs-recordings";
 const SRS_CONTAINER_DIR = "/data/recordings";
@@ -61,16 +62,24 @@ export class CloudWebhookController {
         throw new NotFoundException("推流鉴权失败");
       }
       const eventAt = new Date();
-      const patch: { status: "LIVE" | "ENDED"; lastEventAt: Date; lastPublishAt?: Date; liveSecondsTotal?: { increment: number } } = {
-        status: action === "on_publish" ? "LIVE" : "ENDED", lastEventAt: eventAt
-      };
-      if (action === "on_publish") patch.lastPublishAt = eventAt;
-      else if (room.lastPublishAt) patch.liveSecondsTotal = { increment: Math.max(0, Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 1000)) };
-      const updated = await this.prisma.room.updateMany({
-        where: { id: room.id, OR: [{ lastEventAt: null }, { lastEventAt: { lt: eventAt } }] },
-        data: patch
+      const status = action === "on_publish" ? "LIVE" : "ENDED";
+      const applied = await withLiveRoute(this.prisma, async (tx, route) => {
+        if (route.provider !== "SRS") {
+          if (action === "on_publish") throw new NotFoundException("推流地址已变更，请重新获取 OBS 设置");
+          return false;
+        }
+        const latest = await tx.room.findUnique({ where: { id: room.id } });
+        if (!latest) return false;
+        const elapsed = action === "on_unpublish" && latest.lastPublishAt
+          ? Math.max(0, Math.round((eventAt.getTime() - latest.lastPublishAt.getTime()) / 1000)) : 0;
+        const updated = await tx.room.updateMany({
+          where: { id: room.id, ...(action === "on_unpublish" ? { status: "LIVE" } : {}), OR: [{ lastEventAt: null }, { lastEventAt: { lt: eventAt } }] },
+          data: { status, lastEventAt: eventAt, ...(action === "on_publish" ? { lastPublishAt: eventAt } : {}), ...(elapsed ? { liveSecondsTotal: { increment: elapsed } } : {}) }
+        });
+        return updated.count > 0;
       });
-      if (updated.count > 0) this.chat.broadcastRoomStatus(room.id, patch.status);
+      if (!applied) return 0;
+      this.chat.broadcastRoomStatus(room.id, status);
       await this.audit.log({
         action: action === "on_publish" ? "PUBLISH_START" : "PUBLISH_STOP",
         detail: `课堂「${room.title}」${action === "on_publish" ? "开始直播" : `结束直播${room.lastPublishAt ? `（时长约 ${Math.round((eventAt.getTime() - room.lastPublishAt.getTime()) / 60000)} 分钟）` : ""}`}`

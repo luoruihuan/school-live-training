@@ -8,7 +8,8 @@ export function allowedOrigin(origin: unknown): boolean {
 }
 
 export function csrfProtection(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || request.path === "/api/webhooks/srs") {
+  const providerCallback = request.method === "POST" && ["/api/webhooks/srs", "/api/webhooks/css"].includes(request.path);
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || providerCallback) {
     next();
     return;
   }

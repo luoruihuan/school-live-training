@@ -134,8 +134,9 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async headRecordingSize(key: string): Promise<number> {
-    const result = await this.recordingsClient().send(new HeadObjectCommand({ Bucket: this.recordingsBucket, Key: key }));
+  async headRecordingSize(key: string, abortSignal?: AbortSignal): Promise<number> {
+    const command = new HeadObjectCommand({ Bucket: this.recordingsBucket, Key: key });
+    const result = await this.recordingsClient().send(command, { abortSignal });
     const length = Number(result.ContentLength ?? 0);
     if (!Number.isSafeInteger(length) || length <= 0) throw new ServiceUnavailableException("回放对象不可读");
     return length;

@@ -14,6 +14,8 @@ import { visibleRoom } from "./room-access.js";
 import { dataScope, isTestCreator, sameSideCreate, scoped, assertSameSide } from "./data-scope.js";
 import { publishToken } from "./cloud-webhook.controller.js";
 import { effectiveCdnDomains } from "./system-settings.js";
+import { cssPlaybackAddress, cssPublishAddress } from "./css-config.js";
+import { readLiveRoute, withLiveRoute } from "./live-route.js";
 import { ChatGateway } from "./chat.gateway.js";
 
 const DETAIL_IMAGE_KEY_PATTERN = /^product-images\/[a-f0-9]{32}\.(jpg|png|webp)$/;
@@ -186,18 +188,38 @@ export class BusinessController {
   async publishAddress(@Req() request: UserRequest, @Param("id") id: string) {
     requireStaff(request.currentUser);
     const room = await this.room(id, request);
-    const domain = liveDomain();
-    const expire = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
-    const token = publishToken(room.streamName, expire);
-    return {
-      url: `rtmp://${domain}:2095/live/${room.streamName}?token=${token}&expire=${expire}`,
-      expiresAt: new Date(expire * 1000).toISOString()
-    };
+    return withLiveRoute(this.prisma, async (tx, route) => {
+      if (route.provider === "CSS") {
+        const stream = await tx.cssStream.upsert({
+          where: { roomId_routeVersion: { roomId: room.id, routeVersion: route.version } },
+          create: { id: randomBytes(16).toString("hex"), roomId: room.id, routeVersion: route.version },
+          update: {}
+        });
+        return cssPublishAddress(stream.id);
+      }
+      const domain = liveDomain();
+      const expire = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
+      const token = publishToken(room.streamName, expire);
+      return {
+        url: `rtmp://${domain}:2095/live/${room.streamName}?token=${token}&expire=${expire}`,
+        expiresAt: new Date(expire * 1000).toISOString()
+      };
+    });
   }
 
   @Get("rooms/:id/playback")
   async playbackAddress(@Param("id") id: string, @Req() request: UserRequest) {
     const room = await this.room(id, request);
+    const route = await readLiveRoute(this.prisma);
+    if (route.provider === "CSS") {
+      const stream = await this.prisma.cssStream.findUnique({
+        where: { roomId_routeVersion: { roomId: room.id, routeVersion: route.version } }, select: { id: true, activeSequence: true }
+      });
+      if (!stream?.activeSequence) {
+        return { status: room.status === "LIVE" ? "READY" : room.status, hls: "", flv: "", expiresAt: new Date().toISOString() };
+      }
+      return { status: "LIVE", ...cssPlaybackAddress(stream.id) };
+    }
     const domain = liveDomain(); // APP_DOMAIN 必须配置（CDN 回源也指向它）
     // 直播 CDN：环境变量能力 × 超管开关；未开启时观众直连源站。
     const { live: liveCdnHost } = await effectiveCdnDomains(this.prisma);

@@ -7,7 +7,7 @@ import type mpegts from "mpegts.js";
 import { api } from "./api";
 
 type PlaybackStatus = "DRAFT" | "READY" | "LIVE" | "ENDED";
-type Playback = { status: PlaybackStatus; hls: string; flv: string; expiresAt: string };
+type Playback = { status: PlaybackStatus; hls: string; flv: string; expiresAt: string; refreshOnExpiry?: boolean };
 type PlayerState = "INITIALIZING" | "WAITING" | "READY" | "PLAYING" | "BUFFERING" | "RECONNECTING" | "ERROR" | "STOPPED";
 type RoomStatusEvent = { roomId: string; status: PlaybackStatus };
 type JoinAck = { ok: boolean; status?: PlaybackStatus; message?: string };
@@ -127,6 +127,7 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
     let hlsPlayer: Hls | undefined;
     let flvPlayer: ReturnType<typeof mpegts.createPlayer> | undefined;
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
     let mediaErrorRecoveries = 0;
     let networkRecoveries = 0;
     let manifestParsed = false;
@@ -251,7 +252,7 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
       hlsPlayer.attachMedia(video);
     };
 
-    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv, status }) => {
+    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv, status, expiresAt, refreshOnExpiry }) => {
       if (cancelled) return;
       diagnostic("playback_address", { status, streamId: streamIdFromUrl(hls) });
       if (status === "LIVE" && roomStatusRef.current === "ENDED") {
@@ -270,8 +271,22 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
         transition("WAITING", "stream_not_live");
         return;
       }
+      if (!hls) {
+        roomStatusRef.current = status;
+        setIdleStatus(status);
+        transition("WAITING", "stream_address_pending");
+        return;
+      }
       roomStatusRef.current = "LIVE";
       setIdleStatus(null);
+      const remaining = Date.parse(expiresAt) - Date.now();
+      if (refreshOnExpiry && Number.isFinite(remaining)) {
+        expiryTimer = setTimeout(() => {
+          if (cancelled || roomStatusRef.current !== "LIVE") return;
+          cleanupReason.current = "playback_signature_refresh";
+          setAttempt((n) => n + 1);
+        }, Math.max(1000, remaining - 60_000));
+      }
       await startHls(hls);
       if (hlsPlayer || video.canPlayType("application/vnd.apple.mpegurl")) return;
 
@@ -299,6 +314,7 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
     return () => {
       cancelled = true;
       mediaActive.current = false;
+      clearTimeout(expiryTimer);
       clearRecoveryTimer();
       clearStallTimer();
       if (nativeRetryTimer.current) {
