@@ -8,21 +8,21 @@
 
 | 用途 | 示例 | 控制台配置 |
 | --- | --- | --- |
-| OBS 推流 | `push-css.example.com` | 添加为推流域名，使用 `live` 作为推流路径 |
+| OBS 推流 | `<BizID>.push.tlivecloud.com` 或 `push-css.example.com` | 默认域名已配置 RTMPS 证书。添加自有推流域名时，使用 `live` 作为推流路径，并通过工单配置 RTMPS 证书 |
 | 学生观看 | `play-css.example.com` | 添加为播放域名，加速区域选「中国大陆」 |
 
-首次接入时按控制台提示验证域名归属，再在 DNS 服务商处把两个子域名分别 CNAME 到控制台提供的目标。业务域名和回放域名继续指向原有服务。
+首次接入自有域名时，按控制台提示验证归属，再在 DNS 服务商处为自有推流域名和播放域名配置 CNAME，指向各自的腾讯云目标。使用腾讯云默认推流域名时只需为自有播放域名配置 DNS。
 
 参考 [添加自有域名](https://cloud.tencent.com/document/product/267/20381) 和 [域名配置常见问题](https://cloud.tencent.com/document/product/267/45252)。
 
 ## 2. 配置推流和播放鉴权
 
-- **推流域名 → 推流配置 → 鉴权配置**。启用推流鉴权，把主 KEY 写入 `CSS_PUSH_KEY`。控制台地址生成器的加密类型选择 **MD5**，可用来核对项目生成的格式。默认采用 RTMP。
+- **推流域名 → 推流配置 → 鉴权配置**。启用推流鉴权，把主 KEY 写入 `CSS_PUSH_KEY`。控制台地址生成器的加密类型选择 **MD5**，可用来核对项目生成的格式。平台默认发放 RTMPS 地址。
 - **播放域名 → 高级配置 → HTTPS 配置**。启用 HTTPS，选择或上传覆盖播放域名的证书。官方文档提示证书配置约 2 小时生效。
 - **播放域名 → 访问控制 → Key 鉴权**。开启 MD5 Key 鉴权，把主 KEY 写入 `CSS_PLAY_KEY`，有效时间填写 **`14400` 秒**。平台按腾讯云规则以 `txTime + 14400` 计算过期时间，并在过期前通过应用接口重新签发地址。
 - CSS 播放域名默认提供 `Access-Control-Allow-Origin`。用学生端实际加载 HLS 清单和分片验证响应头。
 
-校园网如果拦截 RTMP 默认端口 1935，可在腾讯云工单中为自有推流域名申请 RTMPS 证书配置。确认生效并在校园网 OBS 试推后，把 `CSS_PUSH_PROTOCOL` 改为 `rtmps`。
+CSS 默认生成 `rtmps://<推流域名>:443/live`，用于校园网限制 TCP 1935 的场景。可用腾讯云默认推流域名试播。自有推流域名的证书由腾讯云通过工单配置，等工单确认后再用校园网 OBS 试推。只有确认所在网络允许 TCP 1935，才可显式设置 `CSS_PUSH_PROTOCOL=rtmp`。
 
 参考 [推流鉴权](https://cloud.tencent.com/document/product/267/32833)、[播放鉴权](https://cloud.tencent.com/document/product/267/32463)、[HTTPS](https://cloud.tencent.com/document/product/267/32826)、[HTTP 响应头](https://cloud.tencent.com/document/product/267/76557) 和 [RTMPS](https://cloud.tencent.com/document/product/267/56843)。
 
@@ -45,9 +45,9 @@
 1. 在服务器 `deploy/.env` 填写以下值。`CSS_APP_ID` 是开通云直播的腾讯云账号数字 APPID。在腾讯云控制台的「账号信息」页查看。现有 `COS_ENDPOINT`、`COS_REGION`、`COS_RECORDINGS_BUCKET` 及 COS 访问密钥沿用回放配置。
 
    ```dotenv
-   CSS_PUSH_DOMAIN=push-css.example.com
+   CSS_PUSH_DOMAIN=<BizID>.push.tlivecloud.com
    CSS_PLAY_DOMAIN=play-css.example.com
-   CSS_PUSH_PROTOCOL=rtmp
+   CSS_PUSH_PROTOCOL=rtmps
    CSS_PUSH_KEY=
    CSS_PLAY_KEY=
    CSS_CALLBACK_KEY=

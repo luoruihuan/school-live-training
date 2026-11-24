@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Alert, App, Avatar, Badge, Button, Card, Drawer, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Spin, Tag, Typography } from "antd";
 import { ArrowLeftOutlined, ArrowRightOutlined, HistoryOutlined, LogoutOutlined, PlayCircleOutlined, PlaySquareFilled, ProfileOutlined, ReloadOutlined, ShareAltOutlined, ShoppingCartOutlined } from "@ant-design/icons";
 import { io } from "socket.io-client";
-import { api, ApiError, couponRuleText, detailImageUrl, pointText, patch, post, type Product, type User } from "./api";
+import { api, ApiError, couponRuleText, detailImageUrl, pointText, patch, post, type Product, type Room, type User } from "./api";
 import { usePlatform } from "./usePlatform";
 import { NoData, PageTitle, ProductImage, RoomStatus } from "./ui";
 import { Chat } from "./Chat";
@@ -34,6 +34,7 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
   const [roomId, setRoomId] = useState<string | null>(() => new URLSearchParams(location.search).get("room"));
   const [roomProducts, setRoomProducts] = useState<Product[]>([]);
   const [roomError, setRoomError] = useState("");
+  const [liveStatus, setLiveStatus] = useState<{ roomId: string; status: Room["status"] }>();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("全部课堂");
   const [drawer, setDrawer] = useState(false);
@@ -85,11 +86,24 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
     return () => { active = false; };
   }, [roomId, data.products]);
 
-  // 实时上/下链接：订阅本场商品变化，教师/管理员绑定或解绑商品时自动刷新小黄车
+  // 复用本场连接同步课堂状态和商品上下架。
   useEffect(() => {
     if (!roomId || tab !== "rooms") return;
     const connection = io({ transports: ["websocket"] });
-    connection.on("connect", () => { connection.timeout(8000).emit("join-room", roomId, () => undefined); });
+    let statusReceived = false;
+    connection.on("connect", () => {
+      statusReceived = false;
+      connection.timeout(8000).emit("join-room", roomId, (error: Error | null, result?: { ok: boolean; status?: Room["status"] }) => {
+        if (!error && !statusReceived && result?.ok && result.status) {
+          setLiveStatus({ roomId, status: result.status });
+        }
+      });
+    });
+    connection.on("room-status", (event: { roomId: string; status: Room["status"] }) => {
+      if (event.roomId !== roomId) return;
+      statusReceived = true;
+      setLiveStatus(event);
+    });
     connection.on("room-products", (event: { roomId: string; action: "bound" | "unbound"; product: { id: string; name: string; pointsPrice: number; isActive: boolean } }) => {
       if (event.roomId !== roomId) return;
       api<Product[]>(`/rooms/${roomId}/products`).then((items) => setRoomProducts(items.filter((p) => p.isActive)))
@@ -157,7 +171,7 @@ export default function StudentPortal({ user, logout }: { user: User; logout: ()
 
         {(tab === "rooms" || tab === "replays") && roomId && <>
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => selectRoom(null)}>返回{tab === "rooms" ? "课堂" : "回放"}列表</Button>
-          {room ? <><div className="watch-heading"><div><Space><RoomStatus status={room.status} /><span className="muted">{room.store.name}</span></Space><h1>{room.title}</h1></div><Space wrap><Button icon={<ShareAltOutlined />} onClick={() => void navigator.clipboard.writeText(`${location.origin}/?room=${room.id}`).then(() => message.success("课堂链接已复制")).catch(() => message.error("复制失败，请复制浏览器地址"))}>分享课堂</Button><Button icon={<ShoppingCartOutlined />} onClick={() => openShop("selected")}>已选商品 {cartCount || ""}</Button></Space></div>
+          {room ? <><div className="watch-heading"><div><Space><RoomStatus status={liveStatus?.roomId === room.id && tab === "rooms" ? liveStatus.status : room.status} /><span className="muted">{room.store.name}</span></Space><h1>{room.title}</h1></div><Space wrap><Button icon={<ShareAltOutlined />} onClick={() => void navigator.clipboard.writeText(`${location.origin}/?room=${room.id}`).then(() => message.success("课堂链接已复制")).catch(() => message.error("复制失败，请复制浏览器地址"))}>分享课堂</Button><Button icon={<ShoppingCartOutlined />} onClick={() => openShop("selected")}>已选商品 {cartCount || ""}</Button></Space></div>
             {tab === "replays" ? <Card><Replay key={room.id} roomId={room.id} /></Card> : <div className="watch-grid"><div><Card className="video-card"><Suspense fallback={<Spin />}><Player key={room.id} roomId={room.id} userId={user.id} /></Suspense></Card><div className="live-action-bar"><Button icon={<ShoppingCartOutlined />} onClick={() => openShop("products")}>本场商品 {roomProducts.length}</Button><Button onClick={() => openShop("coupons")}>领券</Button><Button type="primary" onClick={() => openShop("selected")}>已选 {cartCount}</Button></div><Card className="spaced-top"><Chat key={room.id} roomId={room.id} canModerate={user.role !== "STUDENT"} /></Card></div><aside className="watch-shop"><Card title={<Space><ShoppingCartOutlined /> 本场商品 <Tag>{roomProducts.length}</Tag></Space>}>{roomError && <Alert type="error" title={roomError} />}{products()}</Card><Card className="spaced-top" title="本场优惠券">{roomCoupons()}</Card><Button block type="primary" className="spaced-top" disabled={!data.cart.length} onClick={() => setCheckoutOpen(true)}>已选 {cartCount} 件 · 去兑换</Button>{room.recordingCount > 0 && <Button block className="spaced-top" icon={<HistoryOutlined />} onClick={showRoomReplay}>查看本场回放</Button>}</aside></div>}
           </> : <NoData text="课堂不存在或暂不可见" />}
         </>}

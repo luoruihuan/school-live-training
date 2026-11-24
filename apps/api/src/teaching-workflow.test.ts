@@ -33,7 +33,9 @@ test("教师不能手动把课堂标为直播中", async () => {
 
 test("直播中不能靠改页面状态关播，但可以修改标题", async () => {
   const saved: unknown[] = [];
-  const prisma = { room: { findUnique: async () => ({ status: "LIVE" }), update: async (input: unknown) => { saved.push(input); return input; } } } as unknown as PrismaService;
+  const room = { findUnique: async () => ({ status: "LIVE" }), update: async (input: unknown) => { saved.push(input); return input; } };
+  const tx = { room, $executeRaw: async () => 1, systemSetting: { findUnique: async () => null } };
+  const prisma = { room, $transaction: async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx) } as unknown as PrismaService;
   const business = new BusinessController(prisma, new StorageService({} as never, {} as never), audit, { broadcastRoomProducts: () => undefined } as never);
   await assert.rejects(business.updateRoom(teacher, "room-1", { status: "ENDED" }), /先停止 OBS/);
   await business.updateRoom(teacher, "room-1", { title: "新课堂标题" });

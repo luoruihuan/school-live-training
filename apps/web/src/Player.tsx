@@ -7,7 +7,7 @@ import type mpegts from "mpegts.js";
 import { api } from "./api";
 
 type PlaybackStatus = "DRAFT" | "READY" | "LIVE" | "ENDED";
-type Playback = { status: PlaybackStatus; hls: string; flv: string; expiresAt: string; refreshOnExpiry?: boolean };
+type Playback = { status: PlaybackStatus; hls: string; flv: string; expiresAt: string; refreshInSeconds?: number };
 type PlayerState = "INITIALIZING" | "WAITING" | "READY" | "PLAYING" | "BUFFERING" | "RECONNECTING" | "ERROR" | "STOPPED";
 type RoomStatusEvent = { roomId: string; status: PlaybackStatus };
 type JoinAck = { ok: boolean; status?: PlaybackStatus; message?: string };
@@ -84,7 +84,7 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
     roomStatusRef.current = next;
     setIdleStatus(next === "LIVE" ? null : next);
     if (next === "LIVE") setError("");
-    if (previous !== null && previous !== next && (previous === "LIVE" || next === "LIVE")) {
+    if (previous !== next && (previous === "LIVE" || next === "LIVE")) {
       diagnostic("room_status", { previous, next });
       cleanupReason.current = next === "ENDED" ? "room_ended" : "room_status_changed";
       setAttempt((value) => value + 1);
@@ -252,7 +252,7 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
       hlsPlayer.attachMedia(video);
     };
 
-    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv, status, expiresAt, refreshOnExpiry }) => {
+    api<Playback>(`/rooms/${roomId}/playback`).then(async ({ hls, flv, status, refreshInSeconds }) => {
       if (cancelled) return;
       diagnostic("playback_address", { status, streamId: streamIdFromUrl(hls) });
       if (status === "LIVE" && roomStatusRef.current === "ENDED") {
@@ -279,13 +279,12 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
       }
       roomStatusRef.current = "LIVE";
       setIdleStatus(null);
-      const remaining = Date.parse(expiresAt) - Date.now();
-      if (refreshOnExpiry && Number.isFinite(remaining)) {
+      if (refreshInSeconds && Number.isFinite(refreshInSeconds) && refreshInSeconds > 0) {
         expiryTimer = setTimeout(() => {
           if (cancelled || roomStatusRef.current !== "LIVE") return;
           cleanupReason.current = "playback_signature_refresh";
           setAttempt((n) => n + 1);
-        }, Math.max(1000, remaining - 60_000));
+        }, refreshInSeconds * 1000);
       }
       await startHls(hls);
       if (hlsPlayer || video.canPlayType("application/vnd.apple.mpegurl")) return;

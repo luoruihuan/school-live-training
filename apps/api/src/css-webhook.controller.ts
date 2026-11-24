@@ -66,7 +66,8 @@ export class CssWebhookController {
     const { room, status } = result;
     this.chat.broadcastRoomStatus(room.id, status);
     await this.audit.log({ action: status === "LIVE" ? "PUBLISH_START" : "PUBLISH_STOP", detail: `课堂「${room.title}」${status === "LIVE" ? "开始直播" : "结束直播"}` });
-    await this.alert.send(`[${status === "LIVE" ? "live start" : "live end"}] Course "${room.title}" (CSS).`);
+    // AlertService 自行处理失败和超时，通知不阻塞腾讯云回调应答。
+    void this.alert.send(`[${status === "LIVE" ? "live start" : "live end"}] Course "${room.title}" (CSS).`);
   }
 
   private async registerRecording(streamId: string, input: Record<string, unknown>, config: ReturnType<typeof verifyCssCallback>): Promise<void> {

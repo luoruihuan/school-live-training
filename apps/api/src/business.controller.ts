@@ -174,14 +174,14 @@ export class BusinessController {
     if (status !== undefined && !["DRAFT", "READY", "ENDED"].includes(String(status))) {
       throw new BadRequestException("直播中状态由云推流回调更新，不能手动设置");
     }
-    if (status !== undefined) {
-      const room = scoped(await this.prisma.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser, "直播间不存在");
+    const titlePatch = { ...(title === undefined ? {} : { title }) };
+    if (status === undefined) return this.prisma.room.update({ where: { id }, data: titlePatch });
+    // 与推流回调串行更新状态，避免手动操作覆盖刚写入的 LIVE。
+    return withLiveRoute(this.prisma, async (tx) => {
+      const room = scoped(await tx.room.findUnique({ where: { id }, select: { status: true, isTest: true } }), request.currentUser, "直播间不存在");
       if (room.status === "LIVE") throw new BadRequestException("直播中请先停止 OBS，等待云回调更新状态");
-    }
-    return this.prisma.room.update({ where: { id }, data: {
-      ...(title === undefined ? {} : { title }),
-      ...(status === undefined ? {} : { status: status as "DRAFT" | "READY" | "LIVE" | "ENDED" })
-    } });
+      return tx.room.update({ where: { id }, data: { ...titlePatch, status: status as "DRAFT" | "READY" | "ENDED" } });
+    });
   }
 
   @Get("rooms/:id/publish")

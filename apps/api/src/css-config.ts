@@ -21,7 +21,7 @@ export function cssConfig() {
   const pushDomain = cssDomain("CSS_PUSH_DOMAIN");
   const playDomain = cssDomain("CSS_PLAY_DOMAIN");
   if (pushDomain === playDomain) throw new ServiceUnavailableException("CSS 推流和播放域名须不同");
-  const protocol = process.env.CSS_PUSH_PROTOCOL?.trim() || "rtmp";
+  const protocol = process.env.CSS_PUSH_PROTOCOL?.trim() || "rtmps";
   if (protocol !== "rtmp" && protocol !== "rtmps") throw new ServiceUnavailableException("CSS_PUSH_PROTOCOL 须为 rtmp 或 rtmps");
   return {
     pushDomain, playDomain, protocol,
@@ -53,8 +53,9 @@ function sign(key: string, stream: string, timestamp: number): string {
 export function cssPublishAddress(stream: string, now = Math.floor(Date.now() / 1000)) {
   const config = cssConfig();
   const expires = now + PUSH_TTL_SECONDS;
+  const port = config.protocol === "rtmps" ? ":443" : "";
   return {
-    url: `${config.protocol}://${config.pushDomain}/${CSS_APP}/${stream}?${sign(config.pushKey, stream, expires)}`,
+    url: `${config.protocol}://${config.pushDomain}${port}/${CSS_APP}/${stream}?${sign(config.pushKey, stream, expires)}`,
     expiresAt: new Date(expires * 1000).toISOString()
   };
 }
@@ -66,7 +67,8 @@ export function cssPlaybackAddress(stream: string, now = Math.floor(Date.now() /
   const query = sign(playKey, stream, now);
   return {
     hls: `${path}.m3u8?${query}`, flv: `${path}.flv?${query}`,
-    expiresAt: new Date((now + CSS_PLAY_TTL_SECONDS) * 1000).toISOString(), refreshOnExpiry: true
+    expiresAt: new Date((now + CSS_PLAY_TTL_SECONDS) * 1000).toISOString(),
+    refreshOnExpiry: true, refreshInSeconds: CSS_PLAY_TTL_SECONDS - 60
   };
 }
 
