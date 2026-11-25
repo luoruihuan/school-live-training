@@ -64,8 +64,8 @@ for svc in "${SERVICES[@]}"; do
     docker tag "live-training-$svc:latest" "live-training-$svc:$ROLLBACK_TAG"
   fi
   docker tag "live-training-$svc:$VERSION" "live-training-$svc:latest"
-  # 清理过多历史版本镜像(保留 latest、rollback* 与刚部署的 $VERSION)
-  docker images "live-training-$svc" --format '{{.Tag}}' | grep -v latest | grep -v rollback | grep -v "$VERSION" | sort -r | tail -n +"$((KEEP_ROLLBACKS + 1))" \
+  # 清理过多历史版本镜像(保留 latest、rollback* 与刚部署的 $VERSION);awk 全过滤时返回 0,避免 grep 无匹配返回 1 触发 set -e 退出
+  docker images "live-training-$svc" --format '{{.Tag}}' | awk -v ver="$VERSION" '$0 != "latest" && $0 !~ /^rollback/ && $0 != ver' | sort -r | tail -n +"$((KEEP_ROLLBACKS + 1))" \
     | while read -r tag; do docker image rm "live-training-$svc:$tag" > /dev/null 2>&1 || true; done
 done
 
