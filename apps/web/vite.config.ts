@@ -4,6 +4,7 @@ import { createReadStream, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const mockVideo = process.env.MOCK_VIDEO_PATH || fileURLToPath(new URL("../../../../新年视频mp4.mp4", import.meta.url));
+const apiTarget = process.env.API_TARGET || "http://127.0.0.1:3000";
 
 export default defineConfig({
   plugins: [react(), { name: "local-mock-video", configureServer(server) {
@@ -25,7 +26,7 @@ export default defineConfig({
     });
   } }],
   server: { proxy: {
-    "/api": "http://127.0.0.1:3000",
-    "/socket.io": { target: "http://127.0.0.1:3000", ws: true }
+    "/api": apiTarget,
+    "/socket.io": { target: apiTarget, ws: true }
   } }
 });

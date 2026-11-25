@@ -5,17 +5,27 @@ import { io } from "socket.io-client";
 import type Hls from "hls.js";
 import type mpegts from "mpegts.js";
 import { api } from "./api";
+import { DanmakuLayer, DANMAKU_DURATION_SECONDS, type DanmakuItem, type DanmakuMessage } from "./DanmakuLayer";
 
 type PlaybackStatus = "DRAFT" | "READY" | "LIVE" | "ENDED";
 type Playback = { status: PlaybackStatus; hls: string; flv: string; expiresAt: string; refreshInSeconds?: number };
 type PlayerState = "INITIALIZING" | "WAITING" | "READY" | "PLAYING" | "BUFFERING" | "RECONNECTING" | "ERROR" | "STOPPED";
 type RoomStatusEvent = { roomId: string; status: PlaybackStatus };
 type JoinAck = { ok: boolean; status?: PlaybackStatus; message?: string };
+type RemovedMessageEvent = { roomId: string; messageId: string };
 
 const MAX_NETWORK_RECOVERIES = 5;
 const MAX_MEDIA_RECOVERIES = 1;
 const STALL_NOTICE_MS = 6000;
 const MEDIA_ERROR_NOTICE_MS = 4000;
+/** 弹幕轨道数:低密度场景下固定轨道轮询即可避免重叠,无需碰撞计算 */
+const DANMAKU_TRACKS = 6;
+/** 同屏弹幕上限:超出直接不展示(聊天列表仍保留最近 50 条,只丢展示层) */
+const DANMAKU_MAX_ONSCREEN = 24;
+/** 同轨道两条弹幕的最小进入间隔,避免视觉追尾 */
+const DANMAKU_ENTER_GAP_MS = 350;
+/** 弹幕文本的每字符宽度粗估值(px),用于估算"完全进入画面"所需时间 */
+const DANMAKU_CHAR_WIDTH_PX = 13;
 
 function streamIdFromUrl(url: string): string | undefined {
   try {
@@ -52,6 +62,13 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
   const [ratio, setRatio] = useState<{ w: number; h: number } | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>("INITIALIZING");
   const playerStateRef = useRef<PlayerState>("INITIALIZING");
+  const [danmaku, setDanmaku] = useState<DanmakuItem[]>([]);
+  const [danmakuEnabled, setDanmakuEnabled] = useState(() => {
+    try { return window.localStorage.getItem("live:danmaku") !== "off"; } catch { return true; }
+  });
+  const danmakuEnabledRef = useRef(danmakuEnabled);
+  /** 每条轨道下一次可入场的时刻(ms 时间戳),用于低密度下的防追尾排队 */
+  const danmakuTrackReadyAt = useRef<number[]>(Array.from({ length: DANMAKU_TRACKS }, () => 0));
 
   function diagnostic(event: string, details: Record<string, unknown> = {}): void {
     const video = videoRef.current;
@@ -84,11 +101,52 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
     roomStatusRef.current = next;
     setIdleStatus(next === "LIVE" ? null : next);
     if (next === "LIVE") setError("");
+    if (next === "ENDED") setDanmaku([]);
     if (previous !== next && (previous === "LIVE" || next === "LIVE")) {
       diagnostic("room_status", { previous, next });
       cleanupReason.current = next === "ENDED" ? "room_ended" : "room_status_changed";
       setAttempt((value) => value + 1);
     }
+  }
+
+  /** 新消息入弹幕队列:分配 readyAt 最早的轨道并按需排队延迟,保证同轨道不追尾。 */
+  function pushDanmaku(message: DanmakuMessage): void {
+    if (!danmakuEnabledRef.current) return;
+    const tracks = danmakuTrackReadyAt.current;
+    const label = `${message.user.displayName} `;
+    const estimatedWidth = (label.length + message.content.length) * DANMAKU_CHAR_WIDTH_PX + 36;
+    const stageWidth = videoRef.current?.parentElement?.clientWidth;
+    const travel = (stageWidth ?? 720) + estimatedWidth;
+    const enterMs = (estimatedWidth / travel) * DANMAKU_DURATION_SECONDS * 1000 + DANMAKU_ENTER_GAP_MS;
+    const now = Date.now();
+    let track = 0;
+    for (let index = 1; index < tracks.length; index++) {
+      if (tracks[index] < tracks[track]) track = index;
+    }
+    const delay = Math.max(0, tracks[track] - now);
+    tracks[track] = Math.max(now, tracks[track]) + enterMs;
+    const item: DanmakuItem = {
+      id: message.id,
+      author: message.user.displayName,
+      role: message.user.role,
+      content: message.content,
+      track,
+      delay
+    };
+    setDanmaku((items) => items.length >= DANMAKU_MAX_ONSCREEN ? items : [...items, item]);
+  }
+
+  function expireDanmaku(id: string): void {
+    setDanmaku((items) => items.filter((item) => item.id !== id));
+  }
+
+  function toggleDanmaku(): void {
+    const next = !danmakuEnabledRef.current;
+    danmakuEnabledRef.current = next;
+    setDanmakuEnabled(next);
+    if (!next) setDanmaku([]);
+    try { window.localStorage.setItem("live:danmaku", next ? "on" : "off"); } catch { /* 无痕模式下忽略 */ }
+    diagnostic("danmaku_toggle", { enabled: next });
   }
 
   useEffect(() => {
@@ -112,10 +170,18 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
     connection.on("room-status", (event: RoomStatusEvent) => {
       if (event.roomId === roomId) updateRoomStatus(event.status);
     });
+    connection.on("new-message", (message: DanmakuMessage) => {
+      if (message.roomId === roomId && roomStatusRef.current === "LIVE") pushDanmaku(message);
+    });
+    connection.on("remove-message", (event: RemovedMessageEvent) => {
+      if (event.roomId === roomId) setDanmaku((items) => items.filter((item) => item.id !== event.messageId));
+    });
     connection.on("disconnect", (reason) => diagnostic("socket_disconnected", { reason }));
     connection.on("connect_error", (reason) => diagnostic("socket_connect_error", { reason: reason.message }));
     return () => {
       connection.disconnect();
+      setDanmaku([]);
+      danmakuTrackReadyAt.current.fill(0);
       diagnostic("socket_disposed");
     };
   }, [roomId, mock]);
@@ -333,6 +399,8 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
   const playerStyle: CSSProperties = ratio ? { aspectRatio: `${ratio.w} / ${ratio.h}` } : { aspectRatio: "16 / 9" };
 
   return <div className={`player${portrait ? " player--portrait" : ""}`} style={playerStyle} data-player-state={playerState}>
+    <DanmakuLayer items={danmaku} onExpired={expireDanmaku} />
+    <button type="button" className="player__danmaku-toggle" aria-pressed={danmakuEnabled} aria-label={danmakuEnabled ? "关闭弹幕" : "开启弹幕"} onClick={toggleDanmaku}>弹幕 {danmakuEnabled ? "开" : "关"}</button>
     <video
       ref={videoRef}
       controls
