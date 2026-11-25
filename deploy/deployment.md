@@ -65,7 +65,7 @@ ssh server 'ls -la /srv/live-training/backups/'                                 
 - 回放不另做备份副本：正本即 COS（11个9 持久性），180 天生命周期自动删除。
 - 每日备份（ubuntu crontab 03:15）：`/usr/local/bin/backup-to-oracle.sh`（源文件版本化于 deploy/server/backup-to-oracle.sh，
   改动后需同步到两台服务器）→ 甲骨文对象存储桶
-  `live-recordings` 的 `backup/mysql/`（按时间戳独立文件，永不覆盖，本地与桶内均保留 14 天）
+  `live-recordings` 的 `backup/mysql/`（按时间戳独立文件，内容哈希未变化时不生成新文件，本地与桶内均保留最近 14 份）
   与 `backup/product-images/`（商品图 copy-only）；失败自动飞书告警。
   已下线：backup-to-cos.sh 与 COS 备份桶 live-backup（2026-11-14 删除）。
 - 发布时备份：deploy.sh 每次部署前全库备份（本地保留 10 份），机制不变。
