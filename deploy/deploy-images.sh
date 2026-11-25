@@ -9,7 +9,6 @@ VERSION="${1:?用法: deploy-images.sh <镜像版本号,如 20261125-143000-17c4
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 COMPOSE=(docker compose --env-file deploy/.env -f compose.production.yaml)
-SERVICES=(api web initialize)
 KEEP_BACKUPS=10
 KEEP_ROLLBACKS=3
 HEALTH_TIMEOUT=180
@@ -56,11 +55,13 @@ shopt -u nullglob
 
 step "5/7 存档旧镜像并应用新镜像 $VERSION"
 ROLLBACK_TAG="rollback-$(date +%Y%m%d-%H%M%S)"
-for svc in "${SERVICES[@]}"; do
+# initialize 是一次性幂等初始化容器,不留 rollback 与历史版本(部署完成即删)
+for svc in api web; do
   # 期望的新版本镜像必须已通过 docker load 到达本机
   docker image inspect "live-training-$svc:$VERSION" > /dev/null 2>&1 || fail "live-training-$svc:$VERSION 不存在,请先运行本地 deploy/publish.sh 完成传输"
-  # 存档当前 latest(供快速回滚),保留最近 KEEP_ROLLBACKS 份
-  if docker image inspect "live-training-$svc:latest" > /dev/null 2>&1; then
+  # 存档当前 latest(供快速回滚;latest 与新镜像同 ID 时为重复执行,跳过避免无效 rollback 堆积)
+  if docker image inspect "live-training-$svc:latest" > /dev/null 2>&1 \
+     && [ "$(docker image inspect --format '{{.Id}}' "live-training-$svc:latest")" != "$(docker image inspect --format '{{.Id}}' "live-training-$svc:$VERSION")" ]; then
     docker tag "live-training-$svc:latest" "live-training-$svc:$ROLLBACK_TAG"
   fi
   docker tag "live-training-$svc:$VERSION" "live-training-$svc:latest"
@@ -68,6 +69,8 @@ for svc in "${SERVICES[@]}"; do
   docker images "live-training-$svc" --format '{{.Tag}}' | awk -v ver="$VERSION" '$0 != "latest" && $0 !~ /^rollback/ && $0 != ver' | sort -r | tail -n +"$((KEEP_ROLLBACKS + 1))" \
     | while read -r tag; do docker image rm "live-training-$svc:$tag" > /dev/null 2>&1 || true; done
 done
+docker image inspect "live-training-initialize:$VERSION" > /dev/null 2>&1 || fail "live-training-initialize:$VERSION 不存在,请先运行本地 deploy/publish.sh 完成传输"
+docker tag "live-training-initialize:$VERSION" "live-training-initialize:latest"
 
 step "6/7 重启服务(使用已加载镜像,不构建)"
 "${COMPOSE[@]}" up -d
@@ -82,6 +85,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     docker image prune -f > /dev/null 2>&1 || true
     "${COMPOSE[@]}" rm -sf initialize > /dev/null 2>&1 || true
     docker image rm live-training-initialize:latest > /dev/null 2>&1 || true
+    docker image rm "live-training-initialize:$VERSION" > /dev/null 2>&1 || true
     printf '\n\033[1;32m发布成功\033[0m %s -> %s(镜像 %s)\n' "$PREV_COMMIT" "$NEW_COMMIT" "$VERSION"
     exit 0
   fi
@@ -89,7 +93,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 
 printf '\n\033[1;31m健康检查超时(api:%s web:%s),按以下步骤回滚:\033[0m
-  1) 快速回滚镜像:for s in api web initialize; do docker tag live-training-$s:%s live-training-$s:latest; done
+  1) 快速回滚镜像:for s in api web; do docker tag live-training-$s:%s live-training-$s:latest; done(initialize 幂等,无需回滚)
      然后 docker compose --env-file deploy/.env -f compose.production.yaml up -d 并观察 docker ps 健康状态
   2) 代码回滚:git reset --hard %s
   3) 如需回滚数据库结构:手动执行 deploy/migrations/*.down.sql(慎用)
