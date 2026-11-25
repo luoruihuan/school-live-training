@@ -1,100 +1,160 @@
-# 校园直播实训平台（School Live Training）
+# 校园直播实训平台
 
-面向学校内部的直播电商教学平台：管理员统一管理账号，教师用 OBS 在电脑端推流开课，学生在网页观看直播、聊天互动、领优惠券并用积分兑换小黄车商品，支持自提/送货与直播回放。不接真实支付与物流，适合作为校园实训环境。
+校园直播实训平台面向学校内部教学场景。教师使用 OBS 开课，学生通过已有课堂入口观看直播、聊天互动、领取优惠券并使用积分兑换本场商品。平台支持直播回放，适合几十人规模的校内实训使用。
 
-前端 React 19 + Ant Design 6，后端 NestJS + Prisma + MySQL，直播与存储基于自托管 SRS + MinIO。学生端 `http://127.0.0.1:5173/`，管理端 `http://127.0.0.1:5173/admin`。
+平台不接入真实支付、退款、库存锁定或物流系统。商品兑换和配送信息用于课堂演示与线下履约。
 
-## 功能特性
+## 产品功能
 
-- **账号体系**：管理员后台统一创建师生账号、重置密码、停用启用；首次登录强制修改初始密码，改密后旧会话全部失效
-- **直播教学**：管理端一键生成限时 OBS 推流地址（HMAC token 鉴权）；学生端 FLV/HLS 播放，直播状态由 SRS 回调自动流转
-- **课堂互动**：WebSocket 实时聊天，支持禁言、消息隐藏，草稿课堂对学生不可见
-- **积分电商**：积分商品、自提点、直播间优惠券；小黄车加购，事务化积分兑换（幂等防重复扣分），默认自提或填送货地点，订单可标记完成
-- **积分管理**：管理员增加/扣减/设置余额，需二次验密码，全量流水分页可查
-- **直播回放**：SRS 录制回调自动上传 MinIO，登录后经 API 流式播放（支持拖动），默认保留 6 个月（180 天，可配）并定时清理
-- **流量管控**：年度直播流量额度台账与阈值预警，超额阻断新直播地址
+- 管理员创建和管理教师、学生、店铺、商品、优惠券与积分
+- 教师创建课堂、配置本场商品、获取 OBS 推流设置并开始直播
+- 学生从原课堂入口观看直播、聊天、领券、加购和兑换商品
+- 直播状态通过实时连接同步到学生端
+- 直播结束后生成回放，支持权限控制、播放计数和拖动播放
+- 超级管理员在系统设置中切换直播线路
+- 全局审计日志记录登录、直播、线路切换、回放和业务操作
+- 测试数据使用独立标记，与正式数据隔离
+
+## 直播线路设计
+
+系统对教师和学生保持统一入口，底层线路由超级管理员设置决定。
+
+```text
+教师获取 OBS 设置
+        │
+        ▼
+统一直播线路协调层
+   ┌────┴────┐
+   │         │
+  SRS       CSS
+   │         │
+   └────┬────┘
+        ▼
+统一课堂状态、互动和回放业务
+        │
+        ▼
+学生原课堂链接
+```
+
+当前支持两条线路。
+
+### SRS
+
+SRS 是自托管直播线路，负责推流接入、HTTP-FLV、HLS、DVR 录制和推流状态回调。SRS 线路适合作为默认线路和 CSS 故障时的回滚线路。
+
+### 腾讯云 CSS
+
+CSS 线路由腾讯云标准直播承载媒体流量。教师仍从原有「获取 OBS 设置」入口获取地址，学生仍打开原课堂链接。
+
+- 默认推流协议为 RTMPS
+- 默认使用 443 端口，适合可能限制 TCP 1935 的校园网
+- 推流地址、播放地址和回调分别使用独立鉴权配置
+- 播放地址支持 HLS 和 HTTP-FLV
+- 播放器在地址接近过期时自动刷新鉴权地址
+- CSS 录制文件写入兼容 S3 的对象存储后登记为平台回放
+- CSS 回调支持推流、断流和录制事件
+- 回调处理具备签名校验、来源校验、过期校验、幂等和乱序保护
+
+直播期间禁止切换线路。线路协调逻辑会让同一课堂的开播、播放、断流和录制回调使用一致的提供方。
+
+## 回放与存储
+
+回放通过统一的 `Recording` 业务模型登记。播放器访问回放前，服务端会检查用户、课堂可见性、回放有效期和对象类型。
+
+对象存储支持两种运行方式。
+
+- MinIO 作为自托管的 S3 兼容存储
+- COS 作为回放长期存储层
+
+SRS 回放由服务端接收录制回调后上传。CSS 回放由云直播录制到对象存储，再由云回调通知服务端入库。两种来源都复用相同的回放列表、权限、播放计数、Range 播放和清理逻辑。
+
+回放对象默认按保留期清理，保留时间由 `RECORDING_RETENTION_DAYS` 控制。CDN 分发和回放 URL 鉴权属于可配置能力，未配置时可以回退到 API 流式播放。
 
 ## 技术栈
 
-| 层 | 技术 |
+| 层次 | 技术 |
 | --- | --- |
-| 前端 | React 19、Ant Design 6、Less、Vite |
+| 前端 | React 19、TypeScript、Ant Design、Less、Vite |
 | 后端 | NestJS、Prisma、MySQL 8+ |
 | 实时通信 | Socket.IO |
-| 直播服务 | SRS（自托管，RTMP 推流 + HTTP-FLV/HLS 播放 + DVR 录制） |
-| 对象存储 | MinIO（自托管，S3 兼容；商品图与回放 MP4） |
+| 自建直播 | SRS |
+| 对象存储 | MinIO 或兼容 S3 的 COS |
+| 播放协议 | HLS、HTTP-FLV、Range MP4 |
+| 鉴权 | 会话认证、角色校验、限时签名、回调验签 |
 
 ## 目录结构
 
 ```text
-├── apps/api    # NestJS API、Prisma 数据模型与数据库初始化入口 npm run db:init
-├── apps/web    # React 学生端与管理端网页
-├── deploy      # 生产部署的 Nginx 模板、备份与证书续期配置
-├── scripts     # 数据库备份、证书部署脚本
-└── compose.production.yaml  # MySQL、API 与网页容器编排
+apps/api/                 NestJS API 与业务模块
+apps/web/                 学生端、教师端和超级管理员工作台
+deploy/                   容器编排模板、SRS 配置和数据库迁移
+apps/api/prisma/          Prisma schema 与数据库初始化
+compose.production.yaml   应用服务编排模板
+.env.example              本地 API 配置示例
+deploy/.env.example       容器运行配置示例
+.knowledge/               本地部署资料、测试记录和运维知识
 ```
 
-## 快速开始（本地开发）
+## 本地开发
 
-1. 安装 Node.js ≥22.12、npm 和 MySQL 8+，确认本机 MySQL 正在运行。
-2. 执行 `cp .env.example apps/api/.env`，填写本机 MySQL 的 `DATABASE_URL`、管理员邮箱与密码。密码必须至少 16 位，不能使用示例值。数据库请单独使用空的 `live_training_points`，不要指向已有业务库。
-3. 执行 `npm install`。
-4. 使用有权限的 MySQL 账号创建空库：`CREATE DATABASE live_training_points CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`。
-5. 执行 `npm run db:generate`、`npm run db:init`。初始化入口只对空库建表；已有库须与当前模型完全一致，否则停止，不做自动迁移。初始化仅创建管理员账号，师生账号与业务资料由管理员在后台添加。
-6. 分别执行 `npm run dev -w apps/api` 与 `npm run dev -w apps/web`，打开 Vite 输出的本地地址，使用初始化管理员账号登录。
-
-本地浏览器默认从 `http://127.0.0.1:5173` 访问；若改用其他前端地址，请在 API 环境配置 `APP_ORIGIN` 为该地址（含协议和端口），否则写入请求与互动连接会被拒绝。Docker 部署会根据 `APP_DOMAIN` 自动设置允许来源；生产环境请设置 `COOKIE_SECURE=true`。调整积分时需再次输入管理员登录密码。API 的 `dev` 命令会先编译后运行；修改后端源码后需重启 API。
-
-## 直播与存储（SRS + MinIO 自托管）
-
-直播与存储全部自托管，不依赖外部云服务：
-
-- **SRS**（`deploy/srs/srs.conf`）：OBS 推流到 `rtmp://域名:1935/live/{streamName}`（管理端生成带 HMAC token 的限时地址）；观看经 nginx 反代 `https://域名/live/{streamName}.flv|.m3u8`；录制（DVR）结束后回调 API 自动上传回放。需在云防火墙/安全组放行 **TCP 1935**（推流）。
-- **MinIO**：S3 兼容对象存储，存商品图与回放 MP4，仅容器网络可达（不对外暴露端口）；回放播放经 API 登录校验后流式转发（支持 Range 拖动）。
-- **回放清理**：双重策略——超过 `RECORDING_RETENTION_DAYS`（默认 180 天）的按期删除；磁盘使用率 ≥ 85% 时提前清理最旧的回放（降到 75% 停止），但创建未满 `RECORDING_MIN_RETENTION_DAYS`（默认 90 天 = 3 个月）的绝不提前删。每 6 小时执行一次。
-- 敏感配���（`SRS_SECRET`、`MINIO_ROOT_USER/PASSWORD`）只保存在服务端 `deploy/.env`，教师在管理页面复制限时推流地址交给 OBS 使用。
-
-## 运行模式与功能边界
-
-- 学生端 `/` 仅供学生使用，管理端 `/admin` 仅供教师和管理员使用；页面不提供跨入口跳转，同一域名下两个入口共享登录会话。
-- 商品使用管理员发放的积分兑换，支持自提或填写送货地点；**不接真实支付、退款、库存锁定和物流接口**，送货为订单信息与线下交付流程。
-- 自动账单同步、外部通知、多租户和班级分权不在当前范围；单实例部署。
-- 本地开发时可用本地 MP4 预览观看界面：先创建一间课堂，在管理端「配置本场」点击「用桌面 MP4 预览」，或在课堂地址后加 `&mock=1`。Vite 仅在开发服务器提供该文件（可用 `MOCK_VIDEO_PATH` 指定本地 MP4 绝对路径），不进入正式构建，也不绕过 API 的真实推流、回放或额度校验；商品、优惠券和积分仍读取当前数据库。
-
-## Docker 部署
-
-使用 `compose.production.yaml` 与 `deploy/.env.example`（复制为 `deploy/.env` 后填写域名与密钥）编排 MySQL、API、网页、SRS、MinIO 容器，配套 `scripts/` 下的数据库备份与证书续期脚本、`deploy/` 下的 Nginx 模板与 SRS 配置。部署后需在云防火墙放行 TCP 1935（OBS 推流）。
-
-### 已有库升级到「测试数据隔离」版本
-
-初始化入口对已有库不做自动迁移（结构不一致会停止部署）。升级前先在 MySQL 执行以下加列语句（均为带默认值的布尔列，秒级完成，不影响现有数据），再拉起新版本：
-
-```sql
-ALTER TABLE `User` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE `Store` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE `Room` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE `Product` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE `Coupon` ADD COLUMN `isTest` BOOLEAN NOT NULL DEFAULT FALSE;
-```
-
-执行后可 `docker compose exec mysql mysql -ulive -p<pwd> live_training -e "SHOW COLUMNS FROM Room LIKE 'isTest'"` 验证。
-
-## 安全设计要点
-
-- 草稿课堂由服务端限制学生访问；跨站写请求与聊天连接来源受限。
-- 测试数据隔离：超级管理员创建的店铺/课堂/商品/优惠券/账号自动标记为测试侧，正式侧（管理员/教师/学生）不可见、不可访问（含播放、互动、加购、领券、账号管理）；测试侧账号同样看不到正式数据；两侧创建与绑定不允许交叉。
-- 积分调整需管理员密码二次核验并记录流水；订单与流水用「用户 + 请求标识」唯一约束防重复提交，同一标识不能换内容重放。
-- 直播/断流/录制回调验签，按事件时间防止旧断流覆盖新开播；推流与播放地址均为限时签名。
-- 密码 scrypt 哈希存储；登录限频；停用/重置即时失效全部会话并断开聊天连接。
-- 健康检查验证数据库；学生订单分页，购物车和领券操作仅刷新相关数据。
-
-## 开发与测试
+环境要求是 Node.js 22.12 或更高版本、npm 和 MySQL 8 或更高版本。
 
 ```bash
-npm run check   # TypeScript 类型检查（api + web）
-npm run build   # 生产构建
-npm test        # 基础测试（数据库集成测试默认跳过）
-RUN_DB_TESTS=true npm test  # 启用真实数据库集成测试
+npm install
+cp .env.example apps/api/.env
+npm run db:generate
+npm run db:init
+npm run dev -w apps/api
+npm run dev -w apps/web
 ```
 
-启用数据库集成测试时使用测试专属随机账号/店铺，结束后只清理本次测试记录，不重置现有数据库。
+本地开发应使用独立数据库。API 的 `APP_ORIGIN` 必须与浏览器访问地址一致。生产环境使用 HTTPS 时，Cookie 安全属性必须开启。
+
+## 配置边界
+
+直播和对象存储的密钥只放在服务端环境变量中。常见配置包括以下几类。
+
+- `SRS_SECRET` 用于自建 SRS 推流鉴权
+- `CSS_PUSH_DOMAIN`、`CSS_PLAY_DOMAIN` 和 `CSS_PUSH_PROTOCOL` 用于 CSS 地址生成
+- `CSS_PUSH_KEY`、`CSS_PLAY_KEY` 和 `CSS_CALLBACK_KEY` 用于 CSS 鉴权
+- `CSS_APP_ID` 用于校验 CSS 回调来源
+- `COS_ENDPOINT`、`COS_REGION`、`COS_SECRET_ID`、`COS_SECRET_KEY` 和 `COS_RECORDINGS_BUCKET` 用于回放存储
+- `REPLAY_CDN_DOMAIN` 和 `CDN_URL_AUTH_KEY` 用于回放 CDN
+- `RECORDING_RETENTION_DAYS` 用于回放保留期
+
+CSS 未完成配置时，系统不能切换到 CSS。配置缺失或格式错误会在超级管理员系统设置中显示原因。
+
+## 安全与数据边界
+
+- 学生、教师、管理员和超级管理员使用不同的服务端权限边界。
+- 草稿课堂和测试数据不会向正式用户暴露。
+- 推流地址和播放地址具有有效期。
+- CSS 回调必须通过签名、时间和来源校验。
+- 回调重复到达或乱序到达不会重复创建回放或覆盖新状态。
+- 回放播放必须通过课堂可见性和用户身份检查。
+- 积分兑换使用事务和幂等约束。
+- 积分调整需要二次身份验证并记录审计日志。
+- 密码不以明文保存，停用用户或重置密码会使旧会话失效。
+
+## 测试与质量检查
+
+```bash
+npm run check
+npm run build
+npm test
+RUN_DB_TESTS=true npm test
+```
+
+直播功能改动应覆盖以下验证范围。
+
+- 超级管理员切换 SRS 和 CSS
+- 直播期间禁止切换线路
+- 教师获取 RTMPS 443 推流地址
+- 学生使用原课堂链接播放
+- SRS 和 CSS 推流、断流、回调和录制入库
+- 回调签名、来源、过期、重复和乱序场景
+- 回放权限、鉴权刷新、Range 播放和过期清理
+- 测试数据清理不影响正式数据
+- 审计日志记录线路切换和关键直播操作
+
+项目级协作规则见 [AGENTS.md](AGENTS.md)。部署配置、云平台配置、备份策略、黑盒测试原始记录和运维报告保存在本地 `.knowledge/`，不会进入版本控制。

@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.example
 coverage/
+manual
 apps/api/src/generated/
 backups/
 .local-mysql/
