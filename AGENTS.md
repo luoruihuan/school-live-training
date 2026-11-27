@@ -67,7 +67,7 @@ CSS 录制回调只接受约定 COS 桶和 `recordings/css/<StreamID>/` 前缀�
 ```text
 apps/api/                 NestJS API、Prisma 模型、鉴权、直播回调和业务接口
 apps/web/                 React 学生端、教师端和超级管理员工作台
-deploy/                   容器编排模板、SRS 配置、迁移文件和部署辅助脚本
+deploy/                   容器编排模板、SRS 配置、迁移文件、发布脚本和部署指南
 apps/api/prisma/          Prisma schema 与生成客户端
 compose.production.yaml   应用服务编排模板
 .env.example              本地 API 配置示例
@@ -99,7 +99,7 @@ RUN_DB_TESTS=true npm test
 - 回放入库、权限、Range 播放和过期清理
 - 超级管理员设置页和审计日志
 
-前端样式只写 `apps/web/src/theme.less`，它是 `main.tsx` 唯一引入的样式文件；`apps/web/src/style.less` 没有被任何地方引用，写进去不会生效。
+前端样式统一写在 `apps/web/src/theme.less`，它是入口唯一引入的样式文件。
 
 ## 安全边界
 
@@ -113,3 +113,5 @@ RUN_DB_TESTS=true npm test
 ## 文档约定
 
 根目录文档只保留项目级说明和可公开的开发约束。部署主机、云控制台、域名、账号、费用、备份、实测报告和故障排查记录统一放在本地 `.knowledge/`。修改实现后同步更新相关本地资料，但不把本地运维信息写回项目级文档。
+
+仓库对外公开。代码、脚本、配置示例、文档和提交信息中不得出现真实的域名、IP、账号、桶名、APPID、密钥和主机别名，示例一律使用 `example.com` 等占位值。含真实值的环境文件加入 `.gitignore`，仓库里只保留 `.example` 模板。同一份文档存在公开版和本地版时（如 `deploy/deployment.md`），公开版只写流程和约定，不记录环境事实。
