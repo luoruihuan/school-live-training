@@ -2,7 +2,7 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import type { UserRequest } from "./auth.guard.js";
 import { BusinessController } from "./business.controller.js";
 import { CloudWebhookController } from "./cloud-webhook.controller.js";
@@ -26,7 +26,7 @@ function cssEvent(fields: Record<string, unknown>) {
     appid: Number(config.CSS_APP_ID), app: config.CSS_PUSH_DOMAIN, appname: "live", ...fields };
 }
 
-test("CSS 签名包含预期过期时间，回调仅接受配置的来源和 COS 路径", (t) => {
+test("CSS 签名包含预期过期时间，自适应码率地址按模板名签名，回调仅接受配置的来源和 COS 路径", (t) => {
   const previous = process.env;
   t.after(() => { process.env = previous; });
   process.env = { ...previous, ...config };
@@ -42,6 +42,19 @@ test("CSS 签名包含预期过期时间，回调仅接受配置的来源和 COS
   assert.equal(url.searchParams.get("txTime"), "5C01D608");
   assert.equal(url.searchParams.get("txSecret"), createHash("md5").update(`${config.CSS_PLAY_KEY}test015C01D608`).digest("hex"));
   assert.equal(new Date(playback.expiresAt).getTime(), (1543624200 + CSS_PLAY_TTL_SECONDS) * 1000);
+  // 自适应码率：HLS 地址和鉴权串都带「_模板名」，FLV 仍为原始流，推流地址不受影响。
+  process.env.CSS_ABR_TEMPLATE = "campus";
+  const adaptive = cssPlaybackAddress("test01", 1543624200);
+  const adaptiveUrl = new URL(adaptive.hls);
+  assert.equal(adaptiveUrl.pathname, "/live/test01_campus.m3u8");
+  assert.equal(adaptiveUrl.searchParams.get("txSecret"), createHash("md5").update(`${config.CSS_PLAY_KEY}test01_campus5C01D608`).digest("hex"));
+  const flvUrl = new URL(adaptive.flv);
+  assert.equal(flvUrl.pathname, "/live/test01.flv");
+  assert.equal(flvUrl.searchParams.get("txSecret"), createHash("md5").update(`${config.CSS_PLAY_KEY}test015C01D608`).digest("hex"));
+  assert.equal(new URL(cssPublishAddress("test01", 1543624200).url).pathname, "/live/test01");
+  process.env.CSS_ABR_TEMPLATE = "123";
+  assert.throws(() => cssPlaybackAddress("test01", 1543624200), ServiceUnavailableException);
+  delete process.env.CSS_ABR_TEMPLATE;
   const signed = cssEvent({});
   const verified = verifyCssCallback(signed);
   assert.throws(() => verifyCssCallback({ ...signed, sign: "0".repeat(32) }), ForbiddenException);

@@ -16,6 +16,8 @@ function cssDomain(name: string): string {
 }
 
 const KEY = /^[a-zA-Z0-9]{16,256}$/;
+// 腾讯云自适应码率模板名：1~10 位字母或数字且不能是纯数字；留空表示 HLS 仍播放原始流。
+const ABR_TEMPLATE = /^(?!\d+$)[a-zA-Z0-9]{1,10}$/;
 
 export function cssConfig() {
   const pushDomain = cssDomain("CSS_PUSH_DOMAIN");
@@ -23,8 +25,10 @@ export function cssConfig() {
   if (pushDomain === playDomain) throw new ServiceUnavailableException("CSS 推流和播放域名须不同");
   const protocol = process.env.CSS_PUSH_PROTOCOL?.trim() || "rtmps";
   if (protocol !== "rtmp" && protocol !== "rtmps") throw new ServiceUnavailableException("CSS_PUSH_PROTOCOL 须为 rtmp 或 rtmps");
+  const abrTemplate = process.env.CSS_ABR_TEMPLATE?.trim() || "";
+  if (abrTemplate && !ABR_TEMPLATE.test(abrTemplate)) throw new ServiceUnavailableException("CSS_ABR_TEMPLATE 须为 1~10 位字母或数字且不能是纯数字");
   return {
-    pushDomain, playDomain, protocol,
+    pushDomain, playDomain, protocol, abrTemplate,
     pushKey: required("CSS_PUSH_KEY", KEY),
     playKey: required("CSS_PLAY_KEY", KEY),
     callbackKey: required("CSS_CALLBACK_KEY", /^[a-zA-Z0-9]{16,32}$/),
@@ -61,12 +65,14 @@ export function cssPublishAddress(stream: string, now = Math.floor(Date.now() / 
 }
 
 export function cssPlaybackAddress(stream: string, now = Math.floor(Date.now() / 1000)) {
-  const { playDomain, playKey } = cssConfig();
+  const { playDomain, playKey, abrTemplate } = cssConfig();
   const path = `https://${playDomain}/${CSS_APP}/${stream}`;
   // CSS 播放实际有效期为 txTime + 播放域名设置的有效时间。
-  const query = sign(playKey, stream, now);
+  // 自适应码率仅支持 HLS：地址为「流名_模板名」，鉴权串同样按带后缀的流名计算；FLV 不支持自适应，仍为原始流。
+  const hlsStream = abrTemplate ? `${stream}_${abrTemplate}` : stream;
   return {
-    hls: `${path}.m3u8?${query}`, flv: `${path}.flv?${query}`,
+    hls: `${path}${abrTemplate ? `_${abrTemplate}` : ""}.m3u8?${sign(playKey, hlsStream, now)}`,
+    flv: `${path}.flv?${sign(playKey, stream, now)}`,
     expiresAt: new Date((now + CSS_PLAY_TTL_SECONDS) * 1000).toISOString(),
     refreshOnExpiry: true, refreshInSeconds: CSS_PLAY_TTL_SECONDS - 60
   };
