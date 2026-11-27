@@ -53,3 +53,18 @@ test("磁盘未达高水位或没有可删记录时不动作", async () => {
   assert.equal(deleted, 0);
   assert.equal(rows.length, 1);
 });
+
+test("回放长期层在 COS 时，本地磁盘再高也不删除回放", async (t) => {
+  const previous = process.env;
+  t.after(() => { process.env = previous; });
+  process.env = { ...previous, COS_ENDPOINT: "https://cos.ap-shanghai.myqcloud.com", COS_SECRET_ID: "test-cos-id", COS_SECRET_KEY: "test-cos-key", COS_RECORDINGS_BUCKET: "recording-1234567890" };
+  const rows: RecordingRow[] = [
+    { id: "r-old", objectKey: "recordings/css/a/1.mp4", createdAt: new Date(Date.now() - 150 * day), expiresAt: new Date(Date.now() + 30 * day) }
+  ];
+  let deleted = 0;
+  const service = makeService(rows, [95, 95, 95]);
+  service.deleteRecording = async () => { deleted++; };
+  await (service as unknown as { cleanupByDiskWatermark: () => Promise<void> }).cleanupByDiskWatermark();
+  assert.equal(deleted, 0, "删 COS 对象释放不了本地空间，不应触发");
+  assert.equal(rows.length, 1);
+});

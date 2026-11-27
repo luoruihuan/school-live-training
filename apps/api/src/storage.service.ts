@@ -205,6 +205,9 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     const low = Math.min(envNumber("RECORDING_DISK_LOW_WATERMARK", 75), high - 1);
     const minKeepDays = envNumber("RECORDING_MIN_RETENTION_DAYS", 90);
     try {
+      // 回放长期层在 COS 时，本地磁盘占用与回放无关：删 COS 对象不会释放本地空间，
+      // 水位清理只适用于回放存在本机 MinIO 的部署；此时本地盘偏高只靠磁盘告警提示人工排查。
+      if (this.cosConfigured()) return;
       let usage = await this.diskUsagePercent();
       if (usage === null || usage < high) return;
       const oldestAllowed = new Date(Date.now() - minKeepDays * 24 * 60 * 60 * 1000);
