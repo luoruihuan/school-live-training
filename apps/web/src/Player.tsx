@@ -276,7 +276,8 @@ export function Player({ roomId, userId, previewMock = false }: { roomId: string
       if (!Hls.isSupported()) return;
 
       diagnostic("adapter_selected", { adapter: "hls.js", streamId: activeStreamId });
-      hlsPlayer = new Hls({ liveSyncDurationCount: 2, enableWorker: true });
+      // 追帧：落后目标延迟时以最高 1.2 倍速追平，避免每次卡顿后延迟一直累积；仅在向前缓冲充足时生效，不会主动跳到直播边缘。
+      hlsPlayer = new Hls({ liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.2, enableWorker: true });
       hlsPlayer.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         if (cancelled) return;
         manifestParsed = true;
