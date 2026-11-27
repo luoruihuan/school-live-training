@@ -174,13 +174,14 @@ test("CDN 设置接口：仅超管可操作，能力未配置时不允许开启"
   t.after(() => { process.env = previous; });
   process.env = { ...previous, CDN_LIVE_DOMAIN: "", REPLAY_CDN_DOMAIN: "" };
   const { OpsController } = await import("./ops.controller.js");
+  const { AlertService } = await import("./alert.service.js");
   const upserts: { key: string; value: string }[] = [];
   let auditCalls = 0;
   const opsPrisma = {
     systemSetting: { findUnique: async () => null, findMany: async () => [...upserts], upsert: async ({ create }: { create: { key: string; value: string } }) => { upserts.push(create); return create; } },
     $transaction: async (operations: Promise<unknown>[]) => { for (const op of operations) await op; }
   } as unknown as PrismaService;
-  const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService, { onlineConnections: () => 0 } as never);
+  const controller = new OpsController(opsPrisma, {} as never, { log: async () => { auditCalls++; } } as unknown as AuditService, { onlineConnections: () => 0 } as never, new AlertService());
   const superAdmin = { currentUser: { id: "sa", role: "SUPER_ADMIN", displayName: "超管" } } as UserRequest;
   const plainAdmin = { currentUser: { id: "ad", role: "ADMIN", displayName: "管理员" } } as UserRequest;
 

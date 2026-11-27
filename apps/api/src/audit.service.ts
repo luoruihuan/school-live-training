@@ -20,7 +20,8 @@ export const AuditActions = {
   PRODUCT_REMOVED: "PRODUCT_REMOVED",
   CDN_SWITCH: "CDN_SWITCH",
   LIVE_PROVIDER_SWITCH: "LIVE_PROVIDER_SWITCH",
-  ORDER_COMPLETED: "ORDER_COMPLETED"
+  ORDER_COMPLETED: "ORDER_COMPLETED",
+  ALERT_TEST: "ALERT_TEST"
 } as const;
 
 export type AuditAction = typeof AuditActions[keyof typeof AuditActions];

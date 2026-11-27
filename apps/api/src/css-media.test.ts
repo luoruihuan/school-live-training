@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { AlertService } from "./alert.service.js";
 import type { UserRequest } from "./auth.guard.js";
 import { BusinessController } from "./business.controller.js";
 import { CloudWebhookController } from "./cloud-webhook.controller.js";
@@ -94,7 +95,7 @@ test("MySQL：CSS 线路权限、开播锁、回调去重和回切后录制入�
   const chat = { broadcastRoomStatus: (_id: string, status: string) => { broadcasts.push(status); } } as never;
   const notice = { send: async () => undefined } as never;
   const storage = { headRecordingSize: async () => 1024 ** 2 } as never;
-  const ops = new OpsController(db, storage, audit, chat);
+  const ops = new OpsController(db, storage, audit, chat, new AlertService());
   const business = new BusinessController(db, storage, audit, chat);
   const css = new CssWebhookController(db, storage, audit, chat, notice);
   const srs = new CloudWebhookController(db, storage, audit, chat, notice);

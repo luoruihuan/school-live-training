@@ -103,3 +103,44 @@ img { max-width: 100%; }
 @media (max-width: 1200px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .live-action-bar { display: flex; gap: 8px; margin-top: 12px; }.live-action-bar .ant-btn { flex: 1; min-width: 0; padding-inline: 5px; } }
 @media (max-width: 700px) { .student-hero { min-height: 150px; padding: 24px; }.hero-illustration { opacity: .5; transform: scale(.35); }.room-setup-row { flex-wrap: wrap; }.room-setup-row > span:first-child { min-width: 100%; } }
+
+// 运维页面（运行监控 / 系统设置 / 操作日志）：网格布局保证同一行卡片等高，说明文字统一为一行小字
+.ops-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.ops-summary { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; }
+.ops-alerts { display: grid; gap: 10px; margin-bottom: 20px; }
+.ops-metrics { margin-bottom: 20px; }
+.ops-metric__sub { margin: 6px 0 0; font-size: 12px; color: rgba(0, 0, 0, 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ops-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
+.ops-grid__full { grid-column: 1 / -1; }
+.ops-grid > * { min-width: 0; }
+.ops-grid .ops-note { margin: 12px 0 0; font-size: 12px; }
+.ops-note { margin: 16px 0 0; font-size: 12px; }
+.status-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #f0f0f0; }
+.status-row:nth-child(-n + 2) { border-top: 0; }
+.status-row__name { font-size: 14px; }
+.status-row__detail { margin-top: 2px; font-size: 12px; color: rgba(0, 0, 0, 0.45); }
+.fact-list { display: grid; }
+.fact { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid #f0f0f0; font-size: 14px; }
+.fact:first-child { border-top: 0; }
+.fact__label { color: rgba(0, 0, 0, 0.65); }
+.fact__value { font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; }
+.fact-list .ops-progress { display: block; margin: 0 0 8px; }
+.setting-list { display: grid; }
+.setting-row { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 14px 0; border-top: 1px solid #f0f0f0; }
+.setting-row:first-child { padding-top: 0; border-top: 0; }
+.setting-row:last-child { padding-bottom: 0; }
+.setting-row__name { font-weight: 500; }
+.setting-row__value { font-variant-numeric: tabular-nums; }
+.setting-row__note { grid-column: 2 / -1; font-size: 12px; line-height: 1.6; color: rgba(0, 0, 0, 0.45); }
+@media (max-width: 1150px) {
+  .ops-grid { grid-template-columns: 1fr; }
+  .status-list { grid-template-columns: 1fr; }
+  .status-row:nth-child(2) { border-top: 1px solid #f0f0f0; }
+}
+@media (max-width: 700px) {
+  .setting-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .setting-row__value { text-align: right; }
+  .setting-row > .ant-select, .setting-row > .ant-switch, .setting-row > .ant-tag { grid-column: 1 / -1; justify-self: start; }
+  .setting-row__note { grid-column: 1 / -1; }
+}

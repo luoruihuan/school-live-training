@@ -69,7 +69,7 @@ export function Management({ tab, data, onNavigate }: { tab: ManageTab; data: Pl
       </>}
     </Modal>
     <Modal title={publish?.title ? `${publish.title} · 推流设置` : "推流设置"} open={!!publish} onCancel={() => setPublish(undefined)} footer={<Button onClick={() => setPublish(undefined)}>关闭</Button>}>
-      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="warning" showIcon title="开播前，先在 OBS 设好码率（设置 → 输出）" description={<>720p 填 <b>2000</b>，1080p 填 <b>4000</b>（Kbps）——码率过高，学生观看会卡。结束直播＝停止 OBS 推流。</>} />
+      {publish && <Space orientation="vertical" size="middle" className="full-width"><Alert type="warning" showIcon title="开播前，先在 OBS 设好码率（设置 → 输出）" description={<>720p 填 <b>2000</b>，1080p 填 <b>4000</b>（Kbps），关键帧间隔填 <b>2 秒</b>。码率再高画质提升很小，却会加重上行网络负担，网络不稳时容易断流。结束直播＝停止 OBS 推流。</>} />
         <div><b>OBS 服务器</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(0, publish.url.lastIndexOf("/"))}</Typography.Paragraph></div><div><b>OBS 串流密钥</b><Typography.Paragraph copyable className="address-text">{publish.url.slice(publish.url.lastIndexOf("/") + 1)}</Typography.Paragraph></div>
         <p className="muted">地址有效至 {new Date(publish.expiresAt).toLocaleString("zh-CN")}。过期后重新获取。</p>
       </Space>}

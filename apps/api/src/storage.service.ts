@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat, statfs } from "node:fs/promises";
 import type { Readable } from "node:stream";
-import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaService } from "./prisma.service.js";
 import { recordingRetentionDays, replayCdnDomain, cdnUrlAuthKey, cdnTypeAUrl, REPLAY_URL_TTL_SECONDS } from "./cloud-config.js";
 import { AlertService } from "./alert.service.js";
@@ -162,6 +162,21 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
 
   async localRecordingSize(filePath: string): Promise<number> {
     return (await stat(filePath)).size;
+  }
+
+  /** 回放长期层当前落在哪：腾讯云 COS（桶名）或本机 MinIO。 */
+  recordingsStore(): { store: "COS" | "MinIO"; target: string } {
+    return this.cosConfigured() ? { store: "COS", target: this.recordingsBucket } : { store: "MinIO", target: this.buckets.recordings };
+  }
+
+  /** 回放存储可达性（HeadBucket）。 */
+  async recordingsReachable(): Promise<boolean> {
+    try {
+      await this.recordingsClient().send(new HeadBucketCommand({ Bucket: this.recordingsBucket }), { abortSignal: AbortSignal.timeout(4000) });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async diskUsagePercent(): Promise<number | null> {
