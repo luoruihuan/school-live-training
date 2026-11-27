@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 一键发布脚本（在生产服务器 /srv/live-training 上执行）
-# 用法：ssh server 'bash /srv/live-training/deploy/deploy.sh'
+# 一键发布脚本（在生产服务器的项目目录 /srv/live-training 上执行）
+# 用法：ssh <服务器别名> 'bash /srv/live-training/deploy/deploy.sh'
 # 流程：记录版本 -> 拉取代码 -> 备份数据库 -> 应用迁移 -> 构建镜像 -> 重启 -> 健康检查 -> 输出回滚指引
 set -euo pipefail
 

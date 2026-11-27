@@ -15,3 +15,6 @@ deploy/tls/
 deploy/acme/
 docs/
 code-review-report-*.html
+
+# 真实反向代理片段含业务域名，只保留模板 deploy/server/caddy-live.example.inc
+deploy/server/caddy-live.inc

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # 本地发布:构建镜像 → SSH 传输 → 触发服务器部署(不在服务器上构建)
-# 用法:bash deploy/publish.sh
-# 前提:本地 Docker 已启动、ssh 可连接 server、代码已提交
+# 用法:SSH_HOST=<服务器别名> bash deploy/publish.sh
+# 前提:本地 Docker 已启动、~/.ssh/config 里已配置服务器别名、代码已提交
 # 流程:版本号 → push 代码(origin 容错 + prod 镜像仓库)→ 本地构建三镜像 →
 #       docker save 传输 → 远端执行 deploy/deploy-images.sh(备份→迁移→up→健康检查)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
-SSH_HOST="${SSH_HOST:-server}"
+SSH_HOST="${SSH_HOST:?请用 SSH_HOST 指定服务器在 ~/.ssh/config 中的别名}"
 SERVICES=(api web initialize)
 
 step() { printf '\n\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
